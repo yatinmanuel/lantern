@@ -6,7 +6,8 @@
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![CI](https://img.shields.io/badge/CI-not%20configured-lightgrey)](#continuous-integration)
-[![FOSSA Status](https://app.fossa.com/api/projects/custom%2Bgithub.com%2Fyatinmanuel%2Flantern.svg?type=shield)](https://app.fossa.com/projects/custom%2Bgithub.com%2Fyatinmanuel%2Flantern)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fyatinmanuel%2Flantern.svg?type=shield&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2Fyatinmanuel%2Flantern?ref=badge_shield&issueType=license)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fyatinmanuel%2Flantern.svg?type=shield&issueType=security)](https://app.fossa.com/projects/git%2Bgithub.com%2Fyatinmanuel%2Flantern?ref=badge_shield&issueType=security)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](#requirements)
 [![TypeScript](https://img.shields.io/badge/typescript-5.x-blue)](#requirements)
 
@@ -125,3 +126,5 @@ Use a private disclosure process instead.
 ## License
 
 Apache License 2.0
+
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fyatinmanuel%2Flantern.svg?type=large&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2Fyatinmanuel%2Flantern?ref=badge_large&issueType=license)
