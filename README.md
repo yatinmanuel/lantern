@@ -6,7 +6,7 @@
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![CI](https://img.shields.io/badge/CI-not%20configured-lightgrey)](#continuous-integration)
-[![FOSSA Status](https://app.fossa.com/api/projects/custom%2Bgithub.com%2Fyatinmanuel%2Flanter.svg?type=shield)](https://app.fossa.com/projects/custom%2Bgithub.com%2Fyatinmanuel%2Flanter)
+[![FOSSA Status](https://app.fossa.com/api/projects/custom%2Bgithub.com%2Fyatinmanuel%2Flantern.svg?type=shield)](https://app.fossa.com/projects/custom%2Bgithub.com%2Fyatinmanuel%2Flantern)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](#requirements)
 [![TypeScript](https://img.shields.io/badge/typescript-5.x-blue)](#requirements)
 
