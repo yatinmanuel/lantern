@@ -1,0 +1,17 @@
+node_modules/
+web/node_modules/
+dist/
+web/.next/
+web/out/
+.env
+.env.*
+*.log
+*.db
+*.db-journal
+data/
+logs/
+*.pem
+*.crt
+*.key
+*.pfx
+.DS_Store

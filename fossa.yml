@@ -1,0 +1,7 @@
+version: 3
+project:
+  name: Lantern
+  url: https://github.com/yatinmanuel/lanter
+
+# Analyze all supported package managers found in the repo
+# See https://fossa.com for additional configuration options

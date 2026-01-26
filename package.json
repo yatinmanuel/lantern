@@ -1,0 +1,53 @@
+{
+  "name": "intelligent-pxe-server",
+  "version": "1.0.0",
+  "description": "Lantern - PXE server for automated OS installation",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc && npm run build:web",
+    "build:web": "cd web && npm run build",
+    "start": "node dist/index.js",
+    "dev": "concurrently -n \"BACKEND,WEB\" -c \"blue,green\" \"npm run dev:backend\" \"npm run dev:web\"",
+    "dev:backend": "tsx watch src/index.ts",
+    "dev:web": "cd web && npm run dev",
+    "migrate": "tsx src/database/migrate.ts"
+  },
+  "keywords": [
+    "pxe",
+    "boot",
+    "os-installation",
+    "ai",
+    "automation"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express-session": "^1.18.2",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.6.2",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-session": "^1.19.0",
+    "nats": "^2.29.3",
+    "ssh2": "^1.15.0",
+    "winston": "^3.11.0",
+    "ws": "^8.19.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.5",
+    "@types/ssh2": "^1.11.0",
+    "@types/ws": "^8.18.1",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

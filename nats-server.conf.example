@@ -1,0 +1,16 @@
+# Example NATS server config with TLS enabled
+port: 4222
+
+jetstream {
+  store_dir: "/var/lib/nats/jetstream"
+}
+
+tls {
+  cert_file: "./certs/server-cert.pem"
+  key_file: "./certs/server-key.pem"
+  # Optional: require client certs
+  # ca_file: "./certs/ca.pem"
+  # verify: true
+  # Optional: if clients expect TLS-first
+  # handshake_first: true
+}
