@@ -18,7 +18,7 @@ Lantern is a TypeScript/Node.js PXE orchestration server with an Alpine Linux ag
 - `src/tasks/` - OS install task workflow
 - `src/database/` - SQLite data layer
 - `web/app/` - Next.js app router
-- `web/README.md` - UI-specific setup notes
+- `web/README.md` - UI specific setup notes
 
 ## Generated/Local-Only Artifacts (ignored)
 - `node_modules/`, `web/node_modules/`
