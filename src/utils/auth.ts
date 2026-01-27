@@ -1,22 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { UserModel, SessionModel, PermissionModel } from '../database/user-models.js';
-import { logger } from './logger.js';
 
-export interface AuthRequest extends Request {
-  user?: {
-    id: number;
-    username: string;
-    email: string | null;
-    full_name: string | null;
-    is_active: boolean;
-    is_superuser: boolean;
-  };
-  session?: {
-    id: string;
-    user_id: number;
-    expires_at: string;
-  };
-}
+export type AuthRequest = Request;
 
 /**
  * Middleware to require authentication
@@ -62,7 +47,7 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
     is_active: user.is_active,
     is_superuser: user.is_superuser,
   };
-  req.session = session;
+  req.authSession = session;
 
   next();
 }

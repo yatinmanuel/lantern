@@ -28,7 +28,7 @@ export default function DashboardPage() {
       const data = await api.getServers();
       setServers(data);
     } catch (error) {
-      console.error('Failed to load servers:', error);
+      console.error('Failed to load clients:', error);
     } finally {
       setLoading(false);
     }
@@ -45,13 +45,13 @@ export default function DashboardPage() {
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground">Overview of your PXE server infrastructure</p>
+          <p className="text-muted-foreground">Overview of your PXE clients</p>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Servers</CardTitle>
+              <CardTitle className="text-sm font-medium">Total Clients</CardTitle>
               <Server className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -92,15 +92,15 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Recent Servers</CardTitle>
-            <CardDescription>Latest registered servers</CardDescription>
+          <CardTitle>Recent Clients</CardTitle>
+          <CardDescription>Latest registered clients</CardDescription>
           </CardHeader>
           <CardContent>
             {loading ? (
               <div className="text-center py-8 text-muted-foreground">Loading...</div>
             ) : servers.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
-                No servers registered yet
+                No clients registered yet
               </div>
             ) : (
               <div className="space-y-4">

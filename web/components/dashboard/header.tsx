@@ -17,7 +17,8 @@ import {
 
 const navigation = [
   { name: 'Overview', href: '/' },
-  { name: 'Servers', href: '/servers' },
+  { name: 'Clients', href: '/servers' },
+  { name: 'Images', href: '/images' },
   { name: 'Settings', href: '/settings' },
 ];
 

@@ -1,15 +1,19 @@
 import type { NextConfig } from "next";
 
+const isStaticExport = process.env.NEXT_STATIC_EXPORT === 'true';
+
 const nextConfig: NextConfig = {
-  // Only use static export for production builds (not in dev mode)
-  ...(process.env.NODE_ENV === 'production' ? { output: 'export' } : {}),
-  distDir: 'out',
-  trailingSlash: true,
-  images: {
-    unoptimized: true,
-  },
   reactStrictMode: true,
-  swcMinify: true,
+  ...(isStaticExport
+    ? {
+        output: 'export',
+        distDir: 'out',
+        trailingSlash: true,
+        images: {
+          unoptimized: true,
+        },
+      }
+    : {}),
 };
 
 export default nextConfig;

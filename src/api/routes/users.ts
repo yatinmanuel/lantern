@@ -2,12 +2,13 @@ import { Router, Response } from 'express';
 import { UserModel, RoleModel, PermissionModel, Permission } from '../../database/user-models.js';
 import { getDatabase } from '../../database/index.js';
 import { AuthRequest, requireAuth, requirePermission } from '../../utils/auth.js';
+import { parseParamInt } from '../../utils/params.js';
 import { logger } from '../../utils/logger.js';
 
 export const userRoutes = Router();
 
 // Get all users (requires users.view permission)
-userRoutes.get('/', requireAuth, requirePermission('users.view'), async (req: AuthRequest, res: Response) => {
+userRoutes.get('/', requireAuth, requirePermission('users.view'), async (_req: AuthRequest, res: Response) => {
   try {
     const users = UserModel.findAll();
     const usersWithRoles = users.map(user => {
@@ -27,7 +28,7 @@ userRoutes.get('/', requireAuth, requirePermission('users.view'), async (req: Au
 // Get user by ID
 userRoutes.get('/:id', requireAuth, requirePermission('users.view'), async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseParamInt(req.params.id);
     const user = UserModel.findById(id);
     
     if (!user) {
@@ -109,7 +110,7 @@ userRoutes.post('/', requireAuth, requirePermission('users.create'), async (req:
 // Update user
 userRoutes.patch('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseParamInt(req.params.id);
     const user = UserModel.findById(id);
     
     if (!user) {
@@ -166,7 +167,7 @@ userRoutes.patch('/:id', requireAuth, async (req: AuthRequest, res: Response) =>
 // Delete user
 userRoutes.delete('/:id', requireAuth, requirePermission('users.delete'), async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseParamInt(req.params.id);
     
     // Prevent self-deletion
     if (req.user?.id === id) {
@@ -189,7 +190,7 @@ userRoutes.delete('/:id', requireAuth, requirePermission('users.delete'), async 
 });
 
 // Get all roles
-userRoutes.get('/roles/all', requireAuth, requirePermission('users.view'), async (req: AuthRequest, res: Response) => {
+userRoutes.get('/roles/all', requireAuth, requirePermission('users.view'), async (_req: AuthRequest, res: Response) => {
   try {
     const roles = RoleModel.findAll();
     const rolesWithPermissions = roles.map(role => {
@@ -207,7 +208,7 @@ userRoutes.get('/roles/all', requireAuth, requirePermission('users.view'), async
 });
 
 // Get all permissions
-userRoutes.get('/permissions/all', requireAuth, requirePermission('users.view'), async (req: AuthRequest, res: Response) => {
+userRoutes.get('/permissions/all', requireAuth, requirePermission('users.view'), async (_req: AuthRequest, res: Response) => {
   try {
     const permissions = PermissionModel.findAll();
     return res.json(permissions);
@@ -260,7 +261,7 @@ userRoutes.post('/roles', requireAuth, requirePermission('users.manage_roles'), 
 // Update role
 userRoutes.patch('/roles/:id', requireAuth, requirePermission('users.manage_roles'), async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseParamInt(req.params.id);
     const role = RoleModel.findById(id);
     
     if (!role) {
@@ -315,7 +316,7 @@ userRoutes.patch('/roles/:id', requireAuth, requirePermission('users.manage_role
 // Delete role
 userRoutes.delete('/roles/:id', requireAuth, requirePermission('users.manage_roles'), async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseParamInt(req.params.id);
     const role = RoleModel.findById(id);
     
     if (!role) {
@@ -370,7 +371,7 @@ userRoutes.post('/permissions', requireAuth, requirePermission('users.manage_per
 // Update permission
 userRoutes.patch('/permissions/:id', requireAuth, requirePermission('users.manage_permissions'), async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseParamInt(req.params.id);
     const db = getDatabase();
     const permission = db.prepare('SELECT * FROM permissions WHERE id = ?').get(id) as Permission | null;
     
@@ -421,7 +422,7 @@ userRoutes.patch('/permissions/:id', requireAuth, requirePermission('users.manag
 // Delete permission
 userRoutes.delete('/permissions/:id', requireAuth, requirePermission('users.manage_permissions'), async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseParamInt(req.params.id);
     const db = getDatabase();
     const permission = db.prepare('SELECT * FROM permissions WHERE id = ?').get(id) as Permission | null;
     

@@ -1,0 +1,5 @@
+services:
+  dnsmasq:
+    environment:
+      DNSMASQ_LOG_DHCP: 1
+      DNSMASQ_LOG_QUERIES: 1

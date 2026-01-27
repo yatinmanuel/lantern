@@ -87,7 +87,7 @@ export default function ServersPage() {
       const data = await api.getServers();
       setServers(data);
     } catch (error) {
-      console.error('Failed to load servers:', error);
+      console.error('Failed to load clients:', error);
     } finally {
       setLoading(false);
     }
@@ -108,12 +108,12 @@ export default function ServersPage() {
       setFormData({ mac_address: '', ip_address: '', cpu_cores: '', memory_gb: '', disk_gb: '' });
       loadServers();
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to register server');
+      alert(error instanceof Error ? error.message : 'Failed to register client');
     }
   }
 
   async function handleDelete(server: ServerType) {
-    if (!confirm(`Delete server ${server.mac_address}? This action cannot be undone.`)) {
+    if (!confirm(`Delete client ${server.mac_address}? This action cannot be undone.`)) {
       return;
     }
 
@@ -121,12 +121,12 @@ export default function ServersPage() {
       await api.deleteServerById(server.id);
       loadServers();
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to delete server');
+      alert(error instanceof Error ? error.message : 'Failed to delete client');
     }
   }
 
   async function handleViewDetails(server: ServerType) {
-    console.log('Opening details for server:', server.mac_address);
+    console.log('Opening details for client:', server.mac_address);
     setSelectedServer(server);
     setEditData({
       ip_address: server.ip_address || '',
@@ -144,7 +144,7 @@ export default function ServersPage() {
       setTasks(tasksData);
       setInstallations(installationsData);
     } catch (error) {
-      console.error('Failed to load server details:', error);
+      console.error('Failed to load client details:', error);
     } finally {
       setLoadingDetails(false);
     }
@@ -172,7 +172,7 @@ export default function ServersPage() {
         setSelectedServer({ ...selectedServer, ...updates });
       }
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to update server');
+      alert(error instanceof Error ? error.message : 'Failed to update client');
     }
   }
 
@@ -346,7 +346,7 @@ export default function ServersPage() {
               size="sm"
               onClick={() => handleDelete(server)}
               className="text-destructive hover:text-destructive"
-              title="Delete Server"
+              title="Delete Client"
             >
               <Trash2 className="h-4 w-4" />
             </Button>
@@ -359,7 +359,7 @@ export default function ServersPage() {
   async function handleReboot() {
     if (!selectedServer) return;
     
-    if (!confirm(`Are you sure you want to reboot server ${selectedServer.mac_address}?`)) {
+    if (!confirm(`Are you sure you want to reboot client ${selectedServer.mac_address}?`)) {
       return;
     }
 
@@ -369,7 +369,7 @@ export default function ServersPage() {
       alert('Reboot command sent successfully');
       loadServers();
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to reboot server');
+      alert(error instanceof Error ? error.message : 'Failed to reboot client');
     } finally {
       setActionLoading(null);
     }
@@ -378,7 +378,7 @@ export default function ServersPage() {
   async function handleShutdown() {
     if (!selectedServer) return;
     
-    if (!confirm(`Are you sure you want to shutdown server ${selectedServer.mac_address}?`)) {
+    if (!confirm(`Are you sure you want to shutdown client ${selectedServer.mac_address}?`)) {
       return;
     }
 
@@ -388,7 +388,7 @@ export default function ServersPage() {
       alert('Shutdown command sent successfully');
       loadServers();
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to shutdown server');
+      alert(error instanceof Error ? error.message : 'Failed to shutdown client');
     } finally {
       setActionLoading(null);
     }
@@ -429,21 +429,21 @@ export default function ServersPage() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Servers</h1>
-            <p className="text-muted-foreground">Manage your bare metal servers</p>
+            <h1 className="text-3xl font-bold">Clients</h1>
+            <p className="text-muted-foreground">Manage your PXE clients</p>
           </div>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
-                Register Server
+                Register Client
               </Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Register New Server</DialogTitle>
+                <DialogTitle>Register New Client</DialogTitle>
                 <DialogDescription>
-                  Manually register a server for testing
+                  Manually register a client for testing
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
@@ -507,8 +507,8 @@ export default function ServersPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>All Servers</CardTitle>
-            <CardDescription>{servers.length} server(s) registered</CardDescription>
+          <CardTitle>All Clients</CardTitle>
+          <CardDescription>{servers.length} client(s) registered</CardDescription>
           </CardHeader>
           <CardContent>
             {loading ? (
@@ -518,7 +518,7 @@ export default function ServersPage() {
                 <div className="rounded-full bg-muted p-6 mb-4">
                   <Network className="h-12 w-12 text-muted-foreground" />
                 </div>
-                <h3 className="text-xl font-semibold mb-2">No servers</h3>
+                <h3 className="text-xl font-semibold mb-2">No clients</h3>
                 <p className="text-muted-foreground text-center max-w-md mb-6">
                   Boot a client machine from the network to automatically register it. 
                   Make sure your PXE server is properly configured first.
@@ -548,9 +548,9 @@ export default function ServersPage() {
             {selectedServer && (
               <>
                 <DialogHeader>
-                  <DialogTitle>Server Details: {selectedServer.mac_address}</DialogTitle>
+                  <DialogTitle>Client Details: {selectedServer.mac_address}</DialogTitle>
                   <DialogDescription>
-                    Manage server settings and view tasks and installations
+                    Manage client settings and view tasks and installations
                   </DialogDescription>
                 </DialogHeader>
 
@@ -599,7 +599,7 @@ export default function ServersPage() {
                         <Input
                           value={editData.hostname}
                           onChange={(e) => setEditData({ ...editData, hostname: e.target.value })}
-                          placeholder="server-01"
+                    placeholder="client-01"
                         />
                       </div>
                     </div>
@@ -668,8 +668,8 @@ export default function ServersPage() {
 
                     <Card>
                       <CardHeader>
-                        <CardTitle className="text-lg">Server Actions</CardTitle>
-                        <CardDescription>Perform actions on this server</CardDescription>
+                      <CardTitle className="text-lg">Client Actions</CardTitle>
+                      <CardDescription>Perform actions on this client</CardDescription>
                       </CardHeader>
                       <CardContent>
                         <div className="grid grid-cols-2 gap-3">
@@ -825,7 +825,7 @@ export default function ServersPage() {
             <DialogHeader>
               <DialogTitle>Install OS on {selectedServer?.mac_address}</DialogTitle>
               <DialogDescription>
-                Select an operating system to install on this server
+                Select an operating system to install on this client
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">

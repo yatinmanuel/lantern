@@ -43,6 +43,17 @@ export interface PXEConfig {
   updated_at: string;
 }
 
+export interface IsoEntry {
+  id: number;
+  iso_name: string;
+  label: string;
+  os_type: string;
+  kernel_path: string;
+  initrd_items: { path: string; name?: string }[];
+  boot_args: string | null;
+  created_at: string;
+}
+
 export const ServerModel = {
   create(server: Omit<Server, 'id' | 'created_at' | 'updated_at' | 'last_seen'>): Server {
     const db = getDatabase();
@@ -398,6 +409,76 @@ export const PXEConfigModel = {
     const db = getDatabase();
     const stmt = db.prepare('DELETE FROM pxe_config WHERE key = ?');
     const result = stmt.run(key);
+    return result.changes > 0;
+  },
+};
+
+export const IsoModel = {
+  upsert(entry: Omit<IsoEntry, 'id' | 'created_at'>): IsoEntry {
+    const db = getDatabase();
+    const initrdItems = JSON.stringify(entry.initrd_items || []);
+    const stmt = db.prepare(`
+      INSERT INTO iso_entries (iso_name, label, os_type, kernel_path, initrd_items, boot_args)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(iso_name) DO UPDATE SET
+        label = excluded.label,
+        os_type = excluded.os_type,
+        kernel_path = excluded.kernel_path,
+        initrd_items = excluded.initrd_items,
+        boot_args = excluded.boot_args
+    `);
+    stmt.run(
+      entry.iso_name,
+      entry.label,
+      entry.os_type,
+      entry.kernel_path,
+      initrdItems,
+      entry.boot_args
+    );
+    return this.findByIsoName(entry.iso_name)!;
+  },
+
+  findByIsoName(isoName: string): IsoEntry | null {
+    const db = getDatabase();
+    const row = db.prepare('SELECT * FROM iso_entries WHERE iso_name = ?').get(isoName) as any;
+    if (!row) return null;
+    let initrd_items: { path: string; name?: string }[] = [];
+    if (row.initrd_items) {
+      try {
+        initrd_items = JSON.parse(row.initrd_items);
+      } catch {
+        initrd_items = [];
+      }
+    }
+    return {
+      ...row,
+      initrd_items,
+    } as IsoEntry;
+  },
+
+  getAll(): IsoEntry[] {
+    const db = getDatabase();
+    const rows = db.prepare('SELECT * FROM iso_entries ORDER BY created_at DESC').all() as any[];
+    return rows.map(row => {
+      let initrd_items: { path: string; name?: string }[] = [];
+      if (row.initrd_items) {
+        try {
+          initrd_items = JSON.parse(row.initrd_items);
+        } catch {
+          initrd_items = [];
+        }
+      }
+      return {
+        ...row,
+        initrd_items,
+      } as IsoEntry;
+    });
+  },
+
+  deleteByIsoName(isoName: string): boolean {
+    const db = getDatabase();
+    const stmt = db.prepare('DELETE FROM iso_entries WHERE iso_name = ?');
+    const result = stmt.run(isoName);
     return result.changes > 0;
   },
 };

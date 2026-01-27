@@ -3,6 +3,7 @@ import { createServer } from './api/server.js';
 import { ServerCleanupService } from './utils/cleanup.js';
 import { natsManager } from './utils/nats-manager.js';
 import { logger } from './utils/logger.js';
+import { generateIpxeMenu } from './utils/ipxe.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -18,6 +19,13 @@ async function main() {
     // Initialize database
     await initDatabase();
     logger.info('Database initialized');
+
+    // Generate iPXE menu on startup
+    try {
+      await generateIpxeMenu();
+    } catch (error) {
+      logger.warn('Failed to generate iPXE menu on startup:', error);
+    }
 
     // Connect to NATS
     const natsDisabled = process.env.NATS_DISABLED === 'true';

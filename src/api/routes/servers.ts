@@ -4,6 +4,7 @@ import { logger } from '../../utils/logger.js';
 import { executeInstallation } from '../../tasks/installer.js';
 import { sseManager } from '../../utils/sse-manager.js';
 import { natsManager } from '../../utils/nats-manager.js';
+import { parseParamInt } from '../../utils/params.js';
 
 export const serverRoutes = Router();
 
@@ -134,7 +135,7 @@ serverRoutes.get('/:mac', (req, res) => {
 // Get server by ID
 serverRoutes.get('/id/:id', (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseParamInt(req.params.id);
     const server = ServerModel.findById(id);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
@@ -198,7 +199,7 @@ serverRoutes.patch('/:mac', (req, res) => {
 // Update server by ID
 serverRoutes.patch('/id/:id', (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseParamInt(req.params.id);
     const server = ServerModel.findById(id);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
@@ -362,7 +363,7 @@ serverRoutes.delete('/:mac', (req, res) => {
 // Delete server by ID
 serverRoutes.delete('/id/:id', (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseParamInt(req.params.id);
     const server = ServerModel.findById(id);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
@@ -398,7 +399,7 @@ serverRoutes.post('/:mac/tasks/:taskId/complete', async (req, res) => {
     // Update last_seen timestamp (heartbeat)
     ServerModel.updateLastSeen(server.id);
 
-    const task = TaskModel.findById(parseInt(req.params.taskId));
+    const task = TaskModel.findById(parseParamInt(req.params.taskId));
     if (!task || task.server_id !== server.id) {
       return res.status(404).json({ error: 'Task not found' });
     }
@@ -419,7 +420,7 @@ serverRoutes.post('/:mac/tasks/:taskId/complete', async (req, res) => {
 // Reboot server by ID (creates a task for the agent to execute)
 serverRoutes.post('/id/:id/reboot', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseParamInt(req.params.id);
     const server = ServerModel.findById(id);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
@@ -469,7 +470,7 @@ serverRoutes.post('/id/:id/reboot', async (req, res) => {
 // Shutdown server by ID (creates a task for the agent to execute)
 serverRoutes.post('/id/:id/shutdown', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseParamInt(req.params.id);
     const server = ServerModel.findById(id);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
@@ -521,7 +522,7 @@ serverRoutes.post('/id/:id/shutdown', async (req, res) => {
 // Install OS on server by ID
 serverRoutes.post('/id/:id/install', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseParamInt(req.params.id);
     const server = ServerModel.findById(id);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });

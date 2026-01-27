@@ -18,6 +18,8 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { userApi, User, Role, Permission } from '@/lib/auth-api';
+import { configApi, PXEConfig } from '@/lib/config-api';
+import { IsoManager } from '@/components/iso-manager';
 import { useAuth } from '@/contexts/auth-context';
 import { DataTable } from '@/components/ui/data-table';
 import { DataTableColumnHeader } from '@/components/ui/data-table-column-header';
@@ -49,9 +51,15 @@ export default function SettingsPage() {
   const [editingPermission, setEditingPermission] = useState<Partial<Permission> | null>(null);
   const [permissionDialogOpen, setPermissionDialogOpen] = useState(false);
   const [newPermission, setNewPermission] = useState({ name: '', resource: '', action: '', description: '' });
+  const [config, setConfig] = useState<PXEConfig>({});
+  const [configForm, setConfigForm] = useState<Record<string, string>>({});
+  const [configLoading, setConfigLoading] = useState(true);
+  const [configSaving, setConfigSaving] = useState(false);
+  const [configMessage, setConfigMessage] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
+    loadConfig();
   }, []);
 
   async function loadData() {
@@ -70,6 +78,125 @@ export default function SettingsPage() {
       setLoading(false);
     }
   }
+
+  const configFields = useMemo(() => ([
+    {
+      key: 'pxe_server_ip',
+      label: 'PXE Server IP',
+      placeholder: '192.168.1.10',
+      help: 'IP address clients should use to reach this server.',
+    },
+    {
+      key: 'pxe_server_port',
+      label: 'PXE Server Port',
+      placeholder: '3000',
+      help: 'Backend HTTP port for iPXE and API endpoints.',
+    },
+    {
+      key: 'dhcp_interface',
+      label: 'DHCP Interface',
+      placeholder: 'ens18',
+      help: 'Network interface used by dnsmasq (if enabled).',
+    },
+    {
+      key: 'dhcp_range',
+      label: 'DHCP Range',
+      placeholder: '192.168.1.100,192.168.1.200,12h',
+      help: 'Lease range and duration for DHCP mode.',
+    },
+    {
+      key: 'web_root',
+      label: 'Web Root',
+      placeholder: '/var/www/html',
+      help: 'Root directory for PXE/TFTP files.',
+    },
+    {
+      key: 'ipxe_menu_path',
+      label: 'iPXE Menu Path',
+      placeholder: '/var/www/html/ipxe/menu.ipxe',
+      help: 'Where the iPXE menu is generated.',
+    },
+    {
+      key: 'iso_dir',
+      label: 'ISO Directory',
+      placeholder: '/var/www/html/iso',
+      help: 'Directory used to store ISO files.',
+    },
+    {
+      key: 'alpine_version',
+      label: 'Alpine Version',
+      placeholder: 'latest-stable',
+      help: 'Default Alpine Linux version.',
+    },
+    {
+      key: 'alpine_mirror',
+      label: 'Alpine Mirror',
+      placeholder: 'https://dl-cdn.alpinelinux.org/alpine',
+      help: 'Mirror URL used for Alpine downloads.',
+    },
+  ]), []);
+
+  async function loadConfig() {
+    try {
+      setConfigLoading(true);
+      const data = await configApi.getConfig();
+      setConfig(data);
+      const formValues: Record<string, string> = {};
+      configFields.forEach((field) => {
+        formValues[field.key] = data[field.key]?.value ?? '';
+      });
+      setConfigForm(formValues);
+      setConfigMessage(null);
+    } catch (error) {
+      console.error('Failed to load configuration:', error);
+      setConfigMessage('Failed to load configuration.');
+    } finally {
+      setConfigLoading(false);
+    }
+  }
+
+  async function handleSaveConfig() {
+    try {
+      setConfigSaving(true);
+      const updates: PXEConfig = {};
+      configFields.forEach((field) => {
+        const existing = config[field.key];
+        updates[field.key] = {
+          value: configForm[field.key] ?? '',
+          description: existing?.description ?? field.help,
+        };
+      });
+      await configApi.updateConfig(updates);
+      setConfigMessage('Configuration saved.');
+      await loadConfig();
+    } catch (error) {
+      console.error('Failed to save configuration:', error);
+      setConfigMessage(error instanceof Error ? error.message : 'Failed to save configuration.');
+    } finally {
+      setConfigSaving(false);
+    }
+  }
+
+  async function handleRegenerateIpxe() {
+    try {
+      const res = await configApi.regenerateIpxeMenu();
+      setConfigMessage(res.message || (res.success ? 'iPXE menu regenerated.' : 'Failed to regenerate iPXE menu.'));
+    } catch (error) {
+      console.error('Failed to regenerate iPXE menu:', error);
+      setConfigMessage('Failed to regenerate iPXE menu.');
+    }
+  }
+
+  async function handleRegenerateDnsmasq() {
+    try {
+      const res = await configApi.regenerateDnsmasq();
+      setConfigMessage(res.message || (res.success ? 'dnsmasq configuration regenerated.' : 'Failed to regenerate dnsmasq config.'));
+    } catch (error) {
+      console.error('Failed to regenerate dnsmasq config:', error);
+      setConfigMessage('Failed to regenerate dnsmasq config.');
+    }
+  }
+
 
   async function handleEditUser(user: User) {
     try {
@@ -539,7 +666,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">Settings</h1>
-        <p className="text-muted-foreground">Manage users, roles, and permissions</p>
+        <p className="text-muted-foreground">Manage users, roles, permissions, and PXE configuration</p>
       </div>
 
       <Tabs defaultValue="users" className="space-y-4">
@@ -547,6 +674,8 @@ export default function SettingsPage() {
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="roles">Roles</TabsTrigger>
           <TabsTrigger value="permissions">Permissions</TabsTrigger>
+          <TabsTrigger value="config">PXE Config</TabsTrigger>
+          <TabsTrigger value="isos">Images</TabsTrigger>
         </TabsList>
 
         <TabsContent value="users" className="space-y-4">
@@ -664,6 +793,72 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="config" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>PXE Configuration</CardTitle>
+                  <CardDescription>Configure PXE, DHCP, and iPXE settings</CardDescription>
+                </div>
+                <Button variant="outline" onClick={loadConfig}>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Refresh
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {configLoading ? (
+                <div className="text-sm text-muted-foreground">Loading configuration...</div>
+              ) : (
+                <div className="space-y-6">
+                  {configMessage && (
+                    <div className="text-sm text-muted-foreground">{configMessage}</div>
+                  )}
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {configFields.map((field) => (
+                      <div key={field.key} className="space-y-2">
+                        <Label htmlFor={`config-${field.key}`}>{field.label}</Label>
+                        <Input
+                          id={`config-${field.key}`}
+                          value={configForm[field.key] ?? ''}
+                          placeholder={field.placeholder}
+                          onChange={(e) => setConfigForm((prev) => ({
+                            ...prev,
+                            [field.key]: e.target.value,
+                          }))}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          {config[field.key]?.description || field.help}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={handleSaveConfig} disabled={configSaving}>
+                      <Save className="mr-2 h-4 w-4" />
+                      Save Configuration
+                    </Button>
+                    <Button variant="secondary" onClick={handleRegenerateIpxe}>
+                      Regenerate iPXE Menu
+                    </Button>
+                    <Button variant="secondary" onClick={handleRegenerateDnsmasq}>
+                      Regenerate dnsmasq Config
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    If you are running dnsmasq in Docker, restart the dnsmasq container after regenerating its config.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="isos" className="space-y-4">
+          <IsoManager />
         </TabsContent>
       </Tabs>
 

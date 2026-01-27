@@ -1,5 +1,4 @@
 import { getDatabase } from './index.js';
-import { logger } from '../utils/logger.js';
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 
@@ -9,8 +8,8 @@ export interface User {
   email: string | null;
   password_hash: string;
   full_name: string | null;
-  is_active: number; // SQLite uses INTEGER for boolean
-  is_superuser: number;
+  is_active: boolean;
+  is_superuser: boolean;
   created_at: string;
   updated_at: string;
   last_login: string | null;

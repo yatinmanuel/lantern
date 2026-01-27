@@ -88,11 +88,36 @@ export async function createServer(): Promise<express.Application> {
   const configModule = await import('./routes/config.js');
   app.use('/api/config', configModule.configRoutes);
 
-  // Serve iPXE files from /var/www/html/ipxe
-  app.use('/ipxe', express.static('/var/www/html/ipxe', {
+  // Import ISO routes (dynamic import)
+  const isoModule = await import('./routes/isos.js');
+  app.use('/api/isos', isoModule.isoRoutes);
+
+  const webRoot = process.env.WEB_ROOT || '/var/www/html';
+  const ipxePath = process.env.IPXE_ROOT || path.join(webRoot, 'ipxe');
+  const isoPath = process.env.ISO_DIR || path.join(webRoot, 'iso');
+
+  if (!fs.existsSync(ipxePath)) {
+    fs.mkdirSync(ipxePath, { recursive: true });
+  }
+  if (!fs.existsSync(isoPath)) {
+    fs.mkdirSync(isoPath, { recursive: true });
+  }
+
+  // Serve iPXE files
+  app.use('/ipxe', express.static(ipxePath, {
     maxAge: '1y',
     etag: false,
     dotfiles: 'allow',
+  }));
+
+  // Serve ISO files
+  app.use('/iso', express.static(isoPath, {
+    maxAge: '1h',
+    etag: true,
+    dotfiles: 'deny',
+    setHeaders: (res, filePath) => {
+      res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
+    },
   }));
 
   const isProduction = process.env.NODE_ENV === 'production';

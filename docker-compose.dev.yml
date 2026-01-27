@@ -1,0 +1,100 @@
+services:
+  nats:
+    container_name: lantern-nats-dev
+    image: nats:2
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats-data:/data
+
+  dnsmasq:
+    container_name: lantern-dnsmasq-dev
+    build:
+      context: ./dnsmasq
+      dockerfile: Dockerfile
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      DHCP_INTERFACE: ${DHCP_INTERFACE:-ens18}
+      DHCP_MODE: ${DHCP_MODE:-proxy}
+      DHCP_PROXY_SUBNET: ${DHCP_PROXY_SUBNET:-192.168.1.0}
+      DHCP_PROXY_NETMASK: ${DHCP_PROXY_NETMASK:-255.255.255.0}
+      DHCP_RANGE: ${DHCP_RANGE:-192.168.1.100,192.168.1.200,12h}
+      PXE_SERVER_IP: ${PXE_SERVER_IP:-192.168.1.10}
+      PXE_SERVER_PORT: ${PXE_SERVER_PORT:-3000}
+      TFTP_ROOT: /var/www/html
+      DNSMASQ_CONFIG_PATH: /var/www/html/dnsmasq.conf
+      IPXE_BASE_URL: ${IPXE_BASE_URL:-https://boot.ipxe.org}
+      WIMBOOT_URL: ${WIMBOOT_URL:-https://boot.ipxe.org/wimboot}
+      DNSMASQ_PORT: ${DNSMASQ_PORT:-0}
+      DNSMASQ_LOG_DHCP: ${DNSMASQ_LOG_DHCP:-1}
+      DNSMASQ_LOG_QUERIES: ${DNSMASQ_LOG_QUERIES:-1}
+    volumes:
+      - ./pxe:/var/www/html
+
+  backend:
+    container_name: lantern-backend-dev
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    working_dir: /app
+    command: >
+      bash -lc "test -x node_modules/.bin/tsx || npm install &&
+      npm run dev:backend"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      NATS_URL: nats://nats:4222
+      DATABASE_PATH: /app/data/pxe.db
+      OS_FILES_DIR: /var/www/html/os-files
+      DNSMASQ_CONFIG_PATH: /var/www/html/dnsmasq.conf
+      PXE_SERVER_IP: ${PXE_SERVER_IP:-192.168.1.10}
+      PXE_SERVER_URL: ${PXE_SERVER_URL:-http://localhost:3000}
+      PXE_SERVER_PORT: ${PXE_SERVER_PORT:-3000}
+      DHCP_INTERFACE: ${DHCP_INTERFACE:-ens18}
+      DHCP_RANGE: ${DHCP_RANGE:-192.168.1.100,192.168.1.200,12h}
+      WEB_ROOT: /var/www/html
+      IPXE_MENU_PATH: /var/www/html/ipxe/menu.ipxe
+      ISO_DIR: /var/www/html/iso
+      ISO_MAX_SIZE_MB: ${ISO_MAX_SIZE_MB:-8192}
+      ALPINE_VERSION: ${ALPINE_VERSION:-latest-stable}
+      ALPINE_MIRROR: ${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
+      CHOKIDAR_USEPOLLING: "1"
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - backend-node-modules:/app/node_modules
+      - ./data:/app/data
+      - ./pxe:/var/www/html
+    depends_on:
+      - nats
+
+  web:
+    container_name: lantern-web-dev
+    image: node:20-bookworm
+    working_dir: /app
+    command: >
+      bash -lc "test -x node_modules/.bin/next || npm install &&
+      npm run dev"
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "1"
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./web:/app
+      - web-node-modules:/app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  nats-data:
+  backend-node-modules:
+  web-node-modules:

@@ -46,8 +46,9 @@ NEXT_PUBLIC_API_URL=http://your-api-url:3000
 
 ## Pages
 
-- **Dashboard** (`/`) - Overview with server statistics
-- **Servers** (`/servers`) - List and manage all registered servers
+- **Dashboard** (`/`) - Overview with client statistics
+- **Clients** (`/servers`) - List and manage all registered clients
+- **Images** (`/images`) - Manage ISO uploads and PXE menu entries
 - **Settings** (`/settings`) - Configuration options
 
 ## Building for Production

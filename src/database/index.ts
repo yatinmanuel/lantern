@@ -76,19 +76,76 @@ export async function initDatabase(): Promise<void> {
     )
   `);
 
-  // Initialize default configuration
-  const initConfig = db.prepare(`
-    INSERT OR IGNORE INTO pxe_config (key, value, description) VALUES
-    ('pxe_server_ip', '192.168.1.10', 'PXE Server IP Address'),
-    ('pxe_server_port', '3000', 'PXE Server Port'),
-    ('dhcp_interface', 'eth0', 'Network interface for DHCP'),
-    ('dhcp_range', '192.168.1.100,192.168.1.200,12h', 'DHCP IP Range'),
-    ('alpine_version', 'latest-stable', 'Alpine Linux Version'),
-    ('alpine_mirror', 'https://dl-cdn.alpinelinux.org/alpine', 'Alpine Mirror URL'),
-    ('web_root', '/var/www/html', 'Web root directory'),
-    ('ipxe_menu_path', '/var/www/html/ipxe/menu.ipxe', 'iPXE Menu Path')
+  // Create ISO entries table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS iso_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      iso_name TEXT NOT NULL UNIQUE,
+      label TEXT NOT NULL,
+      os_type TEXT NOT NULL,
+      kernel_path TEXT NOT NULL,
+      initrd_items TEXT,
+      boot_args TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
   `);
-  initConfig.run();
+
+  // Initialize default configuration (use env overrides when available)
+  const webRootValue = process.env.WEB_ROOT || '/var/www/html';
+  const defaultConfig = [
+    {
+      key: 'pxe_server_ip',
+      value: process.env.PXE_SERVER_IP || '192.168.1.10',
+      description: 'PXE Server IP Address',
+    },
+    {
+      key: 'pxe_server_port',
+      value: process.env.PXE_SERVER_PORT || process.env.PORT || '3000',
+      description: 'PXE Server Port',
+    },
+    {
+      key: 'dhcp_interface',
+      value: process.env.DHCP_INTERFACE || 'eth0',
+      description: 'Network interface for DHCP',
+    },
+    {
+      key: 'dhcp_range',
+      value: process.env.DHCP_RANGE || '192.168.1.100,192.168.1.200,12h',
+      description: 'DHCP IP Range',
+    },
+    {
+      key: 'alpine_version',
+      value: process.env.ALPINE_VERSION || 'latest-stable',
+      description: 'Alpine Linux Version',
+    },
+    {
+      key: 'alpine_mirror',
+      value: process.env.ALPINE_MIRROR || 'https://dl-cdn.alpinelinux.org/alpine',
+      description: 'Alpine Mirror URL',
+    },
+    {
+      key: 'web_root',
+      value: webRootValue,
+      description: 'Web root directory',
+    },
+    {
+      key: 'iso_dir',
+      value: process.env.ISO_DIR || path.join(webRootValue, 'iso'),
+      description: 'ISO storage directory',
+    },
+    {
+      key: 'ipxe_menu_path',
+      value: process.env.IPXE_MENU_PATH || '/var/www/html/ipxe/menu.ipxe',
+      description: 'iPXE Menu Path',
+    },
+  ];
+
+  const initConfig = db.prepare(`
+    INSERT OR IGNORE INTO pxe_config (key, value, description) VALUES (?, ?, ?)
+  `);
+  for (const item of defaultConfig) {
+    initConfig.run(item.key, item.value, item.description);
+  }
 
   // Add last_seen column to existing servers table if it doesn't exist (migration)
   try {

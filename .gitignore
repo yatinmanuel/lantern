@@ -11,6 +11,15 @@ web/out/
 data/
 logs/
 .nats/
+pxe/os-files/
+pxe/ipxe/*.efi
+pxe/ipxe/*.kpxe
+pxe/ipxe/*.pxe
+pxe/ipxe/menu.ipxe
+pxe/dnsmasq.conf
+pxe/iso/*.iso
+pxe/iso/*/
+!pxe/iso/.gitkeep
 *.pem
 *.crt
 *.key

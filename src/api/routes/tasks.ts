@@ -2,13 +2,14 @@ import { Router } from 'express';
 import { TaskModel } from '../../database/models.js';
 import { executeInstallation } from '../../tasks/installer.js';
 import { logger } from '../../utils/logger.js';
+import { parseParamInt } from '../../utils/params.js';
 
 export const taskRoutes = Router();
 
 // Execute a task
 taskRoutes.post('/:taskId/execute', async (req, res) => {
   try {
-    const taskId = parseInt(req.params.taskId);
+    const taskId = parseParamInt(req.params.taskId);
     const task = TaskModel.findById(taskId);
     
     if (!task) {
@@ -48,7 +49,7 @@ taskRoutes.post('/:taskId/execute', async (req, res) => {
     return res.json({ success: true });
   } catch (error) {
     logger.error('Error executing task:', error);
-    const taskId = parseInt(req.params.taskId);
+    const taskId = parseParamInt(req.params.taskId);
     TaskModel.update(taskId, {
       status: 'failed',
       result: error instanceof Error ? error.message : 'Unknown error',

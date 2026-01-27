@@ -46,7 +46,7 @@ export const api = {
     const res = await fetch(`${API_BASE_URL}/api/servers`, {
       credentials: 'include',
     });
-    if (!res.ok) throw new Error('Failed to fetch servers');
+    if (!res.ok) throw new Error('Failed to fetch clients');
     return res.json();
   },
 
@@ -54,7 +54,7 @@ export const api = {
     const res = await fetch(`${API_BASE_URL}/api/servers/${mac}`, {
       credentials: 'include',
     });
-    if (!res.ok) throw new Error('Failed to fetch server');
+    if (!res.ok) throw new Error('Failed to fetch client');
     return res.json();
   },
 
@@ -69,7 +69,7 @@ export const api = {
       credentials: 'include',
       body: JSON.stringify(data),
     });
-    if (!res.ok) throw new Error('Failed to register server');
+    if (!res.ok) throw new Error('Failed to register client');
     return res.json();
   },
 
@@ -78,7 +78,7 @@ export const api = {
       method: 'DELETE',
       credentials: 'include',
     });
-    if (!res.ok) throw new Error('Failed to delete server');
+    if (!res.ok) throw new Error('Failed to delete client');
   },
 
   async deleteServerById(id: number): Promise<void> {
@@ -86,7 +86,7 @@ export const api = {
       method: 'DELETE',
       credentials: 'include',
     });
-    if (!res.ok) throw new Error('Failed to delete server');
+    if (!res.ok) throw new Error('Failed to delete client');
   },
 
   async updateServer(id: number, updates: { ip_address?: string; hostname?: string; status?: Server['status'] }): Promise<Server> {
@@ -96,7 +96,7 @@ export const api = {
       credentials: 'include',
       body: JSON.stringify(updates),
     });
-    if (!res.ok) throw new Error('Failed to update server');
+    if (!res.ok) throw new Error('Failed to update client');
     return res.json();
   },
 
@@ -123,7 +123,7 @@ export const api = {
     });
     if (!res.ok) {
       const error = await res.json();
-      throw new Error(error.error || 'Failed to reboot server');
+      throw new Error(error.error || 'Failed to reboot client');
     }
     return res.json();
   },
@@ -135,7 +135,7 @@ export const api = {
     });
     if (!res.ok) {
       const error = await res.json();
-      throw new Error(error.error || 'Failed to shutdown server');
+      throw new Error(error.error || 'Failed to shutdown client');
     }
     return res.json();
   },

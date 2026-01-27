@@ -8,6 +8,7 @@
     "postinstall": "npm install --prefix web",
     "update:deps": "npx npm-check-updates -u && npx npm-check-updates -u --prefix web && npm install && npm install --prefix web",
     "build": "tsc && npm run build:web",
+    "build:backend": "tsc",
     "build:web": "cd web && npm run build",
     "start": "node dist/index.js",
     "dev": "concurrently -n \"NATS,BACKEND,WEB\" -c \"magenta,blue,green\" \"npm run dev:nats\" \"npm run dev:backend\" \"npm run dev:web\"",
@@ -33,6 +34,7 @@
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "express-session": "^1.19.0",
+    "multer": "^2.0.2",
     "nats": "^2.29.3",
     "ssh2": "^1.17.0",
     "winston": "^3.19.0",
@@ -40,18 +42,19 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^3.0.0",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/express-session": "^1.18.2",
+    "@types/multer": "^2.0.0",
     "@types/node": "^25.0.10",
     "@types/ssh2": "^1.15.5",
     "@types/ws": "^8.18.1",
     "concurrently": "^9.2.1",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3",
-    "@types/bcryptjs": "^3.0.0",
-    "@types/cookie-parser": "^1.4.10",
-    "@types/cors": "^2.8.19",
-    "@types/express-session": "^1.18.2"
+    "typescript": "^5.9.3"
   },
   "overrides": {
     "brace-expansion": "4.0.1",

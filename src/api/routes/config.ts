@@ -4,6 +4,7 @@ import { logger } from '../../utils/logger.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
+import { generateIpxeMenu } from '../../utils/ipxe.js';
 
 const execAsync = promisify(exec);
 
@@ -196,6 +197,7 @@ configRoutes.post('/service/dnsmasq/regenerate', async (_req, res) => {
     const dhcpInterface = configMap.dhcp_interface || 'eth0';
     const dhcpRange = configMap.dhcp_range || '192.168.1.100,192.168.1.200,12h';
     const pxeServerPort = configMap.pxe_server_port || '3000';
+    const webRoot = configMap.web_root || '/var/www/html';
     const ipxeMenuUrl = `http://${pxeServerIp}:${pxeServerPort}/ipxe/menu.ipxe`;
 
     const dnsmasqConfig = `# PXE Server Configuration
@@ -207,7 +209,7 @@ dhcp-option=3,${pxeServerIp}
 dhcp-option=6,${pxeServerIp}
 
 enable-tftp
-tftp-root=/var/www/html
+tftp-root=${webRoot}
 pxe-service=x86PC,"Boot from network",pxelinux
 pxe-service=x86-64_EFI,"Boot from network (UEFI)",ipxe.efi
 
@@ -220,8 +222,20 @@ log-queries
 port=0
 `;
 
+    const configPath = process.env.DNSMASQ_CONFIG_PATH;
+
+    if (configPath) {
+      await fs.writeFile(configPath, dnsmasqConfig);
+      logger.info(`dnsmasq configuration regenerated at ${configPath}`);
+      return res.json({
+        success: true,
+        message: 'dnsmasq configuration regenerated (restart dnsmasq to apply)',
+        path: configPath,
+      });
+    }
+
     await fs.writeFile('/tmp/dnsmasq.conf.pxe', dnsmasqConfig);
-    
+
     // Copy to /etc/dnsmasq.conf (requires sudo)
     try {
       await execAsync(`sudo cp /tmp/dnsmasq.conf.pxe /etc/dnsmasq.conf`);
@@ -245,43 +259,8 @@ port=0
 // Regenerate iPXE menu
 configRoutes.post('/ipxe/regenerate', async (_req, res) => {
   try {
-    const config = PXEConfigModel.getAll();
-    const configMap: Record<string, string> = {};
-    config.forEach(item => {
-      configMap[item.key] = item.value;
-    });
-
-    const pxeServerIp = configMap.pxe_server_ip || '192.168.1.10';
-    const pxeServerPort = configMap.pxe_server_port || '3000';
-    const menuPath = configMap.ipxe_menu_path || '/var/www/html/ipxe/menu.ipxe';
-
-    const ipxeMenu = `#!ipxe
-
-set menu-timeout 5000
-set submenu-timeout \${menu-timeout}
-
-:start
-menu Intelligent PXE Server
-item --gap --          ------------------------- Operating Systems -------------------------
-item alpine           Boot Alpine Linux (Universal PXE Agent)
-item --gap --
-item --key x exit     Exit to shell
-choose --timeout \${menu-timeout} --default alpine selected || exit
-goto \${selected}
-
-:alpine
-echo Booting Alpine Linux with PXE Agent...
-kernel http://${pxeServerIp}/ipxe/alpine/vmlinuz alpine_repo=http://dl-cdn.alpinelinux.org/alpine/latest-stable/main modloop=http://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/netboot/modloop-vanilla PXE_SERVER_URL=http://${pxeServerIp}:${pxeServerPort} quiet
-initrd http://${pxeServerIp}/ipxe/alpine/initramfs
-boot
-
-:exit
-shell
-`;
-
-    await fs.writeFile(menuPath, ipxeMenu);
-    logger.info(`iPXE menu regenerated at ${menuPath}`);
-    return res.json({ success: true, message: 'iPXE menu regenerated', path: menuPath });
+    const result = await generateIpxeMenu();
+    return res.json({ success: true, message: 'iPXE menu regenerated', path: result.path });
   } catch (error: any) {
     logger.error('Error regenerating iPXE menu:', error);
     return res.status(500).json({ 

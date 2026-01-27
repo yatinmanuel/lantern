@@ -43,6 +43,48 @@ npm run build
 npm start
 ```
 
+## Docker (Production)
+
+1. Configure environment:
+   ```bash
+   cp .env.example .env
+   ```
+   Set at minimum: `PXE_SERVER_IP`, `PXE_SERVER_URL`, and `DHCP_INTERFACE`.
+
+2. Download iPXE binaries:
+   iPXE binaries are downloaded automatically by the `dnsmasq` container on startup.
+
+3. Start the stack:
+   ```bash
+   docker compose up -d --build
+   ```
+
+Notes:
+- If your router handles DHCP, set `DHCP_MODE=proxy` (default) and ensure only one DHCP server is active.
+- The PXE/TFTP root is `./pxe` on the host (mounted to `/var/www/html` in containers).
+- If host `dnsmasq` is running, stop it before starting the container.
+
+## Docker (Dev Override)
+
+`docker-compose.override.yml` enables verbose dnsmasq logging for troubleshooting.
+For a clean production run, use:
+```bash
+docker compose -f docker-compose.yml up -d --build
+```
+
+## Docker (Dev Servers)
+
+This spins up the backend and frontend in dev/watch mode inside containers.
+
+```bash
+docker compose -f docker-compose.dev.yml up -d
+```
+
+Notes:
+- Uses `lantern-*-dev` container names.
+- Backend runs `tsx watch` (auto-reload).
+- Web runs `next dev` (auto-reload).
+
 ## Setup
 
 1. **Install dependencies**:
@@ -76,6 +118,11 @@ Key environment variables:
 - `NATS_TLS_CERT` - Path to client certificate for mTLS
 - `NATS_TLS_KEY` - Path to client key for mTLS
 - `NATS_TLS_HANDSHAKE_FIRST` - Set `true` if server requires TLS first
+
+PXE config values are persisted in the database (`pxe_config`) and can be edited
+in the dashboard under **Settings → PXE Config**. ISO management is available
+under **Settings → ISOs** (upload, extract inside the container, auto‑generate
+iPXE menu entries, or scan the ISO directory for manually copied files).
 
 ## Usage
 
