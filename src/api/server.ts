@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import { serverRoutes } from './routes/servers.js';
@@ -94,50 +95,57 @@ export async function createServer(): Promise<express.Application> {
     dotfiles: 'allow',
   }));
 
-  // Serve Next.js static export
+  const isProduction = process.env.NODE_ENV === 'production';
   const webOutPath = path.join(__dirname, '../../web/out');
-  
-  // Serve static files from Next.js export
-  app.use(express.static(webOutPath, {
-    maxAge: '1y',
-    etag: false,
-  }));
 
-  // Handle Next.js client-side routing - serve index.html for all non-API routes
-  app.get('*', (req, res, next) => {
-    // Skip API routes
-    if (req.path.startsWith('/api')) {
-      return next();
-    }
+  if (isProduction && fs.existsSync(webOutPath)) {
+    // Serve Next.js static export
+    app.use(express.static(webOutPath, {
+      maxAge: '1y',
+      etag: false,
+    }));
 
-    // Skip health check
-    if (req.path === '/health') {
-      return next();
-    }
-
-    // Try to serve the requested file
-    let filePath: string;
-    if (req.path === '/') {
-      filePath = path.join(webOutPath, 'index.html');
-    } else if (req.path.endsWith('.html')) {
-      filePath = path.join(webOutPath, req.path);
-    } else {
-      // For routes like /servers, try /servers/index.html
-      filePath = path.join(webOutPath, req.path, 'index.html');
-    }
-
-    res.sendFile(filePath, (err) => {
-      if (err) {
-        // Fallback to root index.html for client-side routing
-        res.sendFile(path.join(webOutPath, 'index.html'), (err2) => {
-          if (err2) {
-            logger.error('Failed to serve dashboard:', err2);
-            res.status(404).json({ error: 'Not found' });
-          }
-        });
+    // Handle Next.js client-side routing - serve index.html for all non-API routes
+    // Express 5 (path-to-regexp) does not accept bare '*' patterns; use regex.
+    app.get(/.*/, (req, res, next) => {
+      // Skip API routes
+      if (req.path.startsWith('/api')) {
+        return next();
       }
+
+      // Skip health check
+      if (req.path === '/health') {
+        return next();
+      }
+
+      // Try to serve the requested file
+      let filePath: string;
+      if (req.path === '/') {
+        filePath = path.join(webOutPath, 'index.html');
+      } else if (req.path.endsWith('.html')) {
+        filePath = path.join(webOutPath, req.path);
+      } else {
+        // For routes like /servers, try /servers/index.html
+        filePath = path.join(webOutPath, req.path, 'index.html');
+      }
+
+      res.sendFile(filePath, (err) => {
+        if (err) {
+          // Fallback to root index.html for client-side routing
+          res.sendFile(path.join(webOutPath, 'index.html'), (err2) => {
+            if (err2) {
+              logger.error('Failed to serve dashboard:', err2);
+              res.status(404).json({ error: 'Not found' });
+            }
+          });
+        }
+      });
     });
-  });
+  } else if (!isProduction) {
+    logger.info('Skipping dashboard static serving in development mode');
+  } else {
+    logger.warn(`Dashboard build not found at ${webOutPath}; skipping static serving`);
+  }
 
   // Error handling
   app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

@@ -10,6 +10,7 @@ web/out/
 *.db-journal
 data/
 logs/
+.nats/
 *.pem
 *.crt
 *.key

@@ -20,12 +20,17 @@ async function main() {
     logger.info('Database initialized');
 
     // Connect to NATS
-    try {
-      await natsManager.connect();
-      logger.info('NATS connected');
-    } catch (error) {
-      logger.warn('Failed to connect to NATS, continuing without it:', error);
-      logger.warn('Task delivery will fall back to HTTP polling');
+    const natsDisabled = process.env.NATS_DISABLED === 'true';
+    if (natsDisabled) {
+      logger.info('NATS disabled via NATS_DISABLED=true');
+    } else {
+      try {
+        await natsManager.connect();
+        logger.info('NATS connected');
+      } catch (error) {
+        logger.warn('Failed to connect to NATS, continuing without it:', error);
+        logger.warn('Task delivery will fall back to HTTP polling');
+      }
     }
 
     // Create and start Express server

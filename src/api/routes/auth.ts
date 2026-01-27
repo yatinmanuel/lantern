@@ -35,15 +35,13 @@ authRoutes.post('/login', async (req, res: Response) => {
     await UserModel.updateLastLogin(user.id);
 
     // Set cookie
-    // For localhost cross-origin (3001 -> 3000), we need sameSite: 'none'
-    // But browsers require secure: true with sameSite: 'none', which needs HTTPS
-    // For localhost dev, we'll try 'none' with secure: false (some browsers may reject)
-    // In production, use 'lax' with secure: true
+    // Browsers reject SameSite=None without Secure. In dev (http), use Lax.
+    // The frontend uses X-Session-Id as a fallback for cross-origin auth.
     const isProduction = process.env.NODE_ENV === 'production';
     res.cookie('session_id', session.id, {
       httpOnly: true,
       secure: isProduction,
-      sameSite: isProduction ? 'lax' : 'none',
+      sameSite: 'lax',
       path: '/',
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
