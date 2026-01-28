@@ -37,9 +37,12 @@ export const isoApi = {
     return res.json();
   },
 
-  async upload(file: File): Promise<JobResponse | void> {
+  async upload(file: File, options?: { autoExtract?: boolean }): Promise<JobResponse | void> {
     const form = new FormData();
     form.append('file', file);
+    if (options?.autoExtract !== undefined) {
+      form.append('auto_extract', String(options.autoExtract));
+    }
     const res = await fetch(`${API_BASE_URL}/api/isos`, {
       method: 'POST',
       credentials: 'include',
@@ -86,12 +89,19 @@ export const isoApi = {
     return res.json().catch(() => undefined);
   },
 
-  async downloadFromUrl(url: string): Promise<JobResponse | void> {
+  async downloadFromUrl(
+    url: string,
+    options?: { autoExtract?: boolean; fileName?: string }
+  ): Promise<JobResponse | void> {
     const res = await fetch(`${API_BASE_URL}/api/isos/remote`, {
       method: 'POST',
       headers: withSessionHeaders({ 'Content-Type': 'application/json' }),
       credentials: 'include',
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({
+        url,
+        auto_extract: options?.autoExtract,
+        file_name: options?.fileName,
+      }),
     });
     if (!res.ok) {
       const error = await res.json().catch(() => ({ error: 'Failed to download image' }));

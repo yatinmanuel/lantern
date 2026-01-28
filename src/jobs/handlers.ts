@@ -58,6 +58,9 @@ async function handleImagesDownload(job: Job): Promise<Record<string, any>> {
       throw new Error('Image already exists');
     }
     await appendJobLog(job.id, `Found existing ISO on disk: ${safeName}`);
+    if (job.payload?.auto_extract === false) {
+      return { fileName: safeName, filePath: targetPath, exists: true };
+    }
     const extractJob = await enqueueJob({
       type: 'images.extract',
       category: 'images',
@@ -80,6 +83,9 @@ async function handleImagesDownload(job: Job): Promise<Record<string, any>> {
     void appendJobLog(job.id, message).catch(() => {});
   });
   await appendJobLog(job.id, `Download complete: ${safeName}`);
+  if (job.payload?.auto_extract === false) {
+    return { fileName: safeName, filePath: targetPath };
+  }
   const extractJob = await enqueueJob({
     type: 'images.extract',
     category: 'images',

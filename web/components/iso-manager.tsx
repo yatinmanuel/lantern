@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 function formatBytes(bytes: number): string {
@@ -44,6 +45,7 @@ export function IsoManager() {
   const [isoUploading, setIsoUploading] = useState(false);
   const [isoFile, setIsoFile] = useState<File | null>(null);
   const [isoMessage, setIsoMessage] = useState<string | null>(null);
+  const [autoExtract, setAutoExtract] = useState(true);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadInputKey, setUploadInputKey] = useState(0);
   const [manualInputKey, setManualInputKey] = useState(0);
@@ -61,6 +63,9 @@ export function IsoManager() {
   const [remoteUrl, setRemoteUrl] = useState('');
   const [remoteMeta, setRemoteMeta] = useState<RemoteImageMeta | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteAutoExtract, setRemoteAutoExtract] = useState(true);
+  const [remoteFileName, setRemoteFileName] = useState('');
+  const [remoteFileNameEdited, setRemoteFileNameEdited] = useState(false);
 
   useEffect(() => {
     loadIsos();
@@ -116,8 +121,12 @@ export function IsoManager() {
     setExtractedFiles([]);
     setExtractedKernelPath('');
     setExtractedInitrdPath('');
+    setAutoExtract(true);
     setRemoteUrl('');
     setRemoteMeta(null);
+    setRemoteAutoExtract(true);
+    setRemoteFileName('');
+    setRemoteFileNameEdited(false);
     setUploadInputKey((key) => key + 1);
     setManualInputKey((key) => key + 1);
     setUploadMode('iso');
@@ -158,12 +167,12 @@ export function IsoManager() {
     }
     try {
       setIsoUploading(true);
-      const response = await isoApi.upload(isoFile);
+      const response = await isoApi.upload(isoFile, { autoExtract });
       if (response?.job) {
         addPendingFromJob(response.job);
       }
       setIsoFile(null);
-      setIsoMessage('Image queued for import.');
+      setIsoMessage(autoExtract ? 'Image queued for import.' : 'ISO uploaded.');
       setUploadOpen(false);
       await loadIsos({ showLoading: false, silent: true });
     } catch (error) {
@@ -246,13 +255,20 @@ export function IsoManager() {
       setIsoMessage('Enter a download URL first.');
       return;
     }
+    if (!remoteFileName.trim()) {
+      setIsoMessage('Enter a filename for the download.');
+      return;
+    }
     try {
       setIsoUploading(true);
-      const response = await isoApi.downloadFromUrl(remoteUrl.trim());
+      const response = await isoApi.downloadFromUrl(remoteUrl.trim(), {
+        autoExtract: remoteAutoExtract,
+        fileName: remoteFileName.trim(),
+      });
       if (response?.job) {
         addPendingFromJob(response.job);
       }
-      setIsoMessage('Image download queued.');
+      setIsoMessage(remoteAutoExtract ? 'Image download queued.' : 'ISO download queued.');
       setUploadOpen(false);
       await loadIsos({ showLoading: false, silent: true });
     } catch (error) {
@@ -272,6 +288,9 @@ export function IsoManager() {
       setRemoteLoading(true);
       const meta = await isoApi.queryRemoteMeta(remoteUrl.trim());
       setRemoteMeta(meta);
+      if (!remoteFileNameEdited) {
+        setRemoteFileName(meta.fileName || '');
+      }
       if (!meta.isIso) {
         setIsoMessage('URL does not appear to be an ISO file.');
       } else {
@@ -482,13 +501,13 @@ export function IsoManager() {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-start justify-between space-y-0">
-        <div>
-          <CardTitle>Images</CardTitle>
-          <CardDescription>
-            Upload images, extract inside the container, and auto-generate iPXE entries.
-          </CardDescription>
-        </div>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <Tabs value="images" className="w-auto">
+          <TabsList>
+            <TabsTrigger value="images">Images</TabsTrigger>
+            <TabsTrigger value="isos">ISOs</TabsTrigger>
+          </TabsList>
+        </Tabs>
         <Dialog
           open={uploadOpen}
           onOpenChange={(open) => {
@@ -534,6 +553,16 @@ export function IsoManager() {
                       onChange={(e) => setIsoFile(e.target.files?.[0] || null)}
                     />
                     <p className="text-xs text-muted-foreground">Only .iso files are accepted.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="auto-extract"
+                      checked={autoExtract}
+                      onCheckedChange={(value) => setAutoExtract(value === true)}
+                    />
+                    <Label htmlFor="auto-extract" className="text-sm">
+                      Auto extract and generate iPXE entry
+                    </Label>
                   </div>
                   {isoFile && (
                     <div className="text-sm text-muted-foreground">
@@ -668,6 +697,8 @@ export function IsoManager() {
                       onChange={(e) => {
                         setRemoteUrl(e.target.value);
                         setRemoteMeta(null);
+                        setRemoteFileName('');
+                        setRemoteFileNameEdited(false);
                       }}
                       className="md:col-span-2"
                     />
@@ -685,10 +716,13 @@ export function IsoManager() {
 
                     <div className="text-sm text-muted-foreground">File name:</div>
                     <Input
-                      readOnly
-                      value={remoteMeta?.fileName ?? ''}
+                      value={remoteFileName}
                       placeholder="Please (re-)query URL to get meta information"
                       className="md:col-span-3"
+                      onChange={(e) => {
+                        setRemoteFileName(e.target.value);
+                        setRemoteFileNameEdited(true);
+                      }}
                     />
 
                     <div className="text-sm text-muted-foreground">File size:</div>
@@ -704,6 +738,16 @@ export function IsoManager() {
 
                   <div className="pt-2 text-xs text-muted-foreground">
                     Query the URL to populate file details before downloading.
+                  </div>
+                  <div className="flex items-center gap-2 pt-2">
+                    <Checkbox
+                      id="remote-auto-extract"
+                      checked={remoteAutoExtract}
+                      onCheckedChange={(value) => setRemoteAutoExtract(value === true)}
+                    />
+                    <Label htmlFor="remote-auto-extract" className="text-sm">
+                      Auto extract and generate iPXE entry
+                    </Label>
                   </div>
                 </TabsContent>
               </div>

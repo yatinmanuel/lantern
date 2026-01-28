@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, ChevronDown, User, Settings, LogOut } from 'lucide-react';
+import { User, Settings, LogOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/auth-context';
@@ -33,7 +33,13 @@ export function Header() {
         {/* Top bar with logo and user info */}
         <div className="flex h-16 items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <Activity className="h-5 w-5 text-foreground" />
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 76 65"
+              className="h-5 w-5 fill-foreground"
+            >
+              <path d="M37.59 0L75.18 65H0L37.59 0z" />
+            </svg>
             <h1 className="text-lg font-bold text-foreground">Lantern</h1>
           </div>
           <DropdownMenu>
@@ -43,7 +49,6 @@ export function Header() {
                   {user?.username?.charAt(0).toUpperCase() || 'U'}
                 </div>
                 <span className="text-sm font-medium">{user?.full_name || user?.username || 'User'}</span>
-                <ChevronDown className="h-4 w-4 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
@@ -64,7 +69,7 @@ export function Header() {
 
         {/* Horizontal navigation tabs */}
         <nav className="flex items-center gap-8">
-          {navigation.map((item) => {
+          {navigation.filter((item) => !['Queue', 'Settings'].includes(item.name)).map((item) => {
             const isActive = item.href === '/' 
               ? pathname === '/' 
               : pathname.startsWith(item.href);
@@ -87,6 +92,30 @@ export function Header() {
               </Link>
             );
           })}
+          <div className="ml-auto flex items-center gap-8">
+            {navigation.filter((item) => ['Queue', 'Settings'].includes(item.name)).map((item) => {
+              const isActive = item.href === '/'
+                ? pathname === '/'
+                : pathname.startsWith(item.href);
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  className={cn(
+                    'relative pb-3.5 text-sm transition-colors',
+                    isActive
+                      ? 'font-bold text-foreground'
+                      : 'font-normal text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {item.name}
+                  {isActive && (
+                    <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-foreground" />
+                  )}
+                </Link>
+              );
+            })}
+          </div>
         </nav>
       </div>
     </header>

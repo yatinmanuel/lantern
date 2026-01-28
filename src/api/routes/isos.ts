@@ -227,7 +227,15 @@ isoRoutes.post('/', requireAuth, requirePermission('config.edit'), (req: AuthReq
       return;
     }
 
+    const autoExtractRaw = (req.body as any)?.auto_extract;
+    const autoExtract = autoExtractRaw === undefined
+      ? true
+      : String(autoExtractRaw).toLowerCase() === 'true';
+
     try {
+      if (!autoExtract) {
+        return res.status(201).json({ success: true, file: file.filename });
+      }
       const { source, created_by, meta } = buildJobMeta(req);
       const job = await enqueueJob({
         type: 'images.extract',
@@ -245,10 +253,10 @@ isoRoutes.post('/', requireAuth, requirePermission('config.edit'), (req: AuthReq
         target_id: file.filename,
       });
 
-      res.status(202).json({ success: true, jobId: job.id, job });
+      return res.status(202).json({ success: true, jobId: job.id, job });
     } catch (queueError) {
       logger.error('ISO queue failed:', queueError);
-      res.status(500).json({ error: 'Failed to queue image import' });
+      return res.status(500).json({ error: 'Failed to queue image import' });
     }
   });
 });
@@ -317,6 +325,10 @@ isoRoutes.post('/manual', requireAuth, requirePermission('config.edit'), (req: A
 
 isoRoutes.post('/remote', requireAuth, requirePermission('config.edit'), async (req: AuthRequest, res: Response) => {
   const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+  const autoExtractRaw = req.body?.auto_extract;
+  const autoExtract = autoExtractRaw === undefined
+    ? true
+    : String(autoExtractRaw).toLowerCase() === 'true';
   if (!url) {
     return res.status(400).json({ error: 'URL is required' });
   }
@@ -331,7 +343,8 @@ isoRoutes.post('/remote', requireAuth, requirePermission('config.edit'), async (
     return res.status(400).json({ error: 'Only http/https URLs are allowed' });
   }
 
-  const baseName = path.basename(parsedUrl.pathname || '');
+  const requestedName = typeof req.body?.file_name === 'string' ? req.body.file_name.trim() : '';
+  const baseName = requestedName || path.basename(parsedUrl.pathname || '');
   const safeName = sanitizeName(baseName || `download-${Date.now()}.iso`);
   if (!safeName.toLowerCase().endsWith('.iso')) {
     return res.status(400).json({ error: 'URL must point to a .iso file' });
@@ -366,7 +379,7 @@ isoRoutes.post('/remote', requireAuth, requirePermission('config.edit'), async (
     message: `Download image ${safeName}`,
     source,
     created_by,
-    payload: { url, safeName, meta },
+    payload: { url, safeName, auto_extract: autoExtract, meta },
     target_type: 'image',
     target_id: safeName,
   });
