@@ -42,7 +42,9 @@ export class SSEManager {
         try {
           res.write(': heartbeat\n\n');
           // Update last_seen timestamp to prevent stale server cleanup
-          ServerModel.updateLastSeenByMac(macAddress);
+          void ServerModel.updateLastSeenByMac(macAddress).catch((error) => {
+            logger.warn(`Failed to update last_seen for ${macAddress}:`, error);
+          });
         } catch (error) {
           logger.warn(`Failed to send heartbeat to ${macAddress}:`, error);
           clearInterval(heartbeat);

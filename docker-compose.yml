@@ -1,7 +1,31 @@
 services:
+  postgres:
+    container_name: lantern-postgres
+    image: postgres:16-alpine
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lantern}
+      POSTGRES_USER: ${POSTGRES_USER:-lantern}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lantern}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   nats:
     container_name: lantern-nats
     image: nats:2
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     command: ["-js", "-sd", "/data", "-m", "8222"]
     restart: unless-stopped
     ports:
@@ -21,6 +45,9 @@ services:
       context: ./dnsmasq
       dockerfile: Dockerfile
     network_mode: host
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -53,11 +80,17 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    command: >
+      sh -lc "test -d node_modules || npm install &&
+      node dist/index.js"
     environment:
       NODE_ENV: production
       PORT: 3000
       NATS_URL: nats://nats:4222
-      DATABASE_PATH: /app/data/pxe.db
+      DATABASE_URL: postgres://lantern:lantern@postgres:5432/lantern
       OS_FILES_DIR: /var/www/html/os-files
       DNSMASQ_CONFIG_PATH: /var/www/html/dnsmasq.conf
       PXE_SERVER_IP: ${PXE_SERVER_IP:-192.168.1.10}
@@ -75,10 +108,10 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - backend-data:/app/data
       - ./pxe:/var/www/html
     depends_on:
       - nats
+      - postgres
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/health',res=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1));\""]
       interval: 10s
@@ -98,6 +131,12 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    command: >
+      sh -lc "test -d node_modules || npm install &&
+      npm run start -- -p 3001"
     environment:
       NODE_ENV: production
       PORT: 3001
@@ -118,7 +157,46 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+  worker:
+    container_name: lantern-worker
+    build:
+      context: .
+      dockerfile: Dockerfile
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    command: >
+      sh -lc "test -d node_modules || npm install &&
+      node dist/jobs/worker.js"
+    environment:
+      NODE_ENV: production
+      NATS_URL: nats://nats:4222
+      DATABASE_URL: postgres://lantern:lantern@postgres:5432/lantern
+      OS_FILES_DIR: /var/www/html/os-files
+      DNSMASQ_CONFIG_PATH: /var/www/html/dnsmasq.conf
+      PXE_SERVER_IP: ${PXE_SERVER_IP:-192.168.1.10}
+      PXE_SERVER_URL: ${PXE_SERVER_URL:-http://localhost:3000}
+      PXE_SERVER_PORT: ${PXE_SERVER_PORT:-3000}
+      DHCP_INTERFACE: ${DHCP_INTERFACE:-ens18}
+      DHCP_RANGE: ${DHCP_RANGE:-192.168.1.100,192.168.1.200,12h}
+      WEB_ROOT: /var/www/html
+      IPXE_MENU_PATH: /var/www/html/ipxe/menu.ipxe
+      ISO_DIR: /var/www/html/iso
+      ISO_MAX_SIZE_MB: ${ISO_MAX_SIZE_MB:-8192}
+      ALPINE_VERSION: ${ALPINE_VERSION:-latest-stable}
+      ALPINE_MIRROR: ${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
+    restart: unless-stopped
+    volumes:
+      - ./pxe:/var/www/html
+    depends_on:
+      - nats
+      - postgres
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   nats-data:
-  backend-data:
+  postgres-data:

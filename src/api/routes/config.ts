@@ -1,19 +1,16 @@
 import { Router } from 'express';
 import { PXEConfigModel } from '../../database/models.js';
 import { logger } from '../../utils/logger.js';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import fs from 'fs/promises';
-import { generateIpxeMenu } from '../../utils/ipxe.js';
-
-const execAsync = promisify(exec);
+import { enqueueJob } from '../../jobs/service.js';
+import { buildJobMeta } from '../../jobs/request-context.js';
+import { getDnsmasqStatus } from '../../utils/config-service.js';
 
 export const configRoutes = Router();
 
 // Get all configuration
-configRoutes.get('/', (_req, res) => {
+configRoutes.get('/', async (_req, res) => {
   try {
-    const config = PXEConfigModel.getAll();
+    const config = await PXEConfigModel.getAll();
     const configObj: Record<string, any> = {};
     config.forEach(item => {
       configObj[item.key] = {
@@ -30,9 +27,9 @@ configRoutes.get('/', (_req, res) => {
 });
 
 // Get specific configuration value
-configRoutes.get('/:key', (req, res) => {
+configRoutes.get('/:key', async (req, res) => {
   try {
-    const value = PXEConfigModel.get(req.params.key);
+    const value = await PXEConfigModel.get(req.params.key);
     if (value === null) {
       return res.status(404).json({ error: 'Configuration key not found' });
     }
@@ -53,13 +50,19 @@ configRoutes.put('/:key', async (req, res) => {
       return res.status(400).json({ error: 'value is required' });
     }
 
-    PXEConfigModel.set(key, value, description);
-    logger.info(`Configuration updated: ${key} = ${value}`);
+    const { source, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'config.update',
+      category: 'config',
+      message: `Update config ${key}`,
+      source,
+      created_by,
+      payload: { key, value, description, meta },
+      target_type: 'config',
+      target_id: key,
+    });
 
-    // Apply configuration changes if needed
-    await applyConfiguration(key, value);
-
-    return res.json({ success: true, key, value });
+    return res.status(202).json({ success: true, jobId: job.id, job });
   } catch (error) {
     logger.error('Error updating configuration:', error);
     return res.status(500).json({ error: 'Failed to update configuration' });
@@ -74,84 +77,30 @@ configRoutes.put('/', async (req, res) => {
       return res.status(400).json({ error: 'Invalid configuration object' });
     }
 
-    const results: Record<string, any> = {};
-    for (const [key, val] of Object.entries(updates)) {
-      if (typeof val === 'object' && val !== null && 'value' in val) {
-        const configVal = val as { value: string; description?: string };
-        PXEConfigModel.set(key, configVal.value, configVal.description);
-        await applyConfiguration(key, configVal.value);
-        results[key] = { success: true };
-      } else {
-        PXEConfigModel.set(key, String(val));
-        await applyConfiguration(key, String(val));
-        results[key] = { success: true };
-      }
-    }
+    const { source, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'config.update',
+      category: 'config',
+      message: 'Update configuration',
+      source,
+      created_by,
+      payload: { updates, meta },
+      target_type: 'config',
+      target_id: 'bulk',
+    });
 
-    logger.info('Configuration updated:', Object.keys(updates));
-    return res.json({ success: true, updated: results });
+    return res.status(202).json({ success: true, jobId: job.id, job });
   } catch (error) {
     logger.error('Error updating configuration:', error);
     return res.status(500).json({ error: 'Failed to update configuration' });
   }
 });
 
-// Apply configuration changes to system
-async function applyConfiguration(key: string, _value: string): Promise<void> {
-  try {
-    switch (key) {
-      case 'pxe_server_ip':
-      case 'pxe_server_port':
-      case 'dhcp_interface':
-      case 'dhcp_range':
-        // These require dnsmasq restart - handled by separate endpoint
-        logger.info(`Configuration ${key} updated. Restart dnsmasq to apply.`);
-        break;
-      
-      case 'ipxe_menu_path':
-        // Menu path changed - no action needed
-        break;
-      
-      default:
-        // Other configs don't require immediate action
-        break;
-    }
-  } catch (error) {
-    logger.error(`Error applying configuration ${key}:`, error);
-  }
-}
-
 // Get dnsmasq status
 configRoutes.get('/service/dnsmasq/status', async (_req, res) => {
   try {
-    try {
-      const { stdout } = await execAsync('systemctl is-active dnsmasq');
-      const isActive = String(stdout).trim() === 'active';
-      return res.json({ 
-        service: 'dnsmasq',
-        status: isActive ? 'running' : 'stopped',
-        active: isActive
-      });
-    } catch {
-      // Try service command as fallback
-      try {
-        const { stdout } = await execAsync('service dnsmasq status');
-        const output = String(stdout);
-        const isRunning = output.includes('running') || output.includes('active');
-        return res.json({ 
-          service: 'dnsmasq',
-          status: isRunning ? 'running' : 'stopped',
-          active: isRunning
-        });
-      } catch {
-        return res.json({ 
-          service: 'dnsmasq',
-          status: 'unknown',
-          active: false,
-          error: 'Cannot determine dnsmasq status'
-        });
-      }
-    }
+    const status = await getDnsmasqStatus();
+    return res.json({ service: 'dnsmasq', ...status });
   } catch (error) {
     logger.error('Error checking dnsmasq status:', error);
     return res.status(500).json({ error: 'Failed to check dnsmasq status' });
@@ -159,25 +108,21 @@ configRoutes.get('/service/dnsmasq/status', async (_req, res) => {
 });
 
 // Restart dnsmasq
-configRoutes.post('/service/dnsmasq/restart', async (_req, res) => {
+configRoutes.post('/service/dnsmasq/restart', async (req, res) => {
   try {
-    try {
-      await execAsync('sudo systemctl restart dnsmasq');
-      logger.info('dnsmasq restarted via systemctl');
-      return res.json({ success: true, message: 'dnsmasq restarted' });
-    } catch {
-      try {
-        await execAsync('sudo service dnsmasq restart');
-        logger.info('dnsmasq restarted via service');
-        return res.json({ success: true, message: 'dnsmasq restarted' });
-      } catch (error: any) {
-        logger.error('Failed to restart dnsmasq:', error);
-        return res.status(500).json({ 
-          error: 'Failed to restart dnsmasq',
-          details: error.message 
-        });
-      }
-    }
+    const { source, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'config.dnsmasq.restart',
+      category: 'config',
+      message: 'Restart dnsmasq',
+      source,
+      created_by,
+      payload: { meta },
+      target_type: 'service',
+      target_id: 'dnsmasq',
+    });
+
+    return res.status(202).json({ success: true, jobId: job.id, job });
   } catch (error) {
     logger.error('Error restarting dnsmasq:', error);
     return res.status(500).json({ error: 'Failed to restart dnsmasq' });
@@ -185,71 +130,21 @@ configRoutes.post('/service/dnsmasq/restart', async (_req, res) => {
 });
 
 // Regenerate dnsmasq config
-configRoutes.post('/service/dnsmasq/regenerate', async (_req, res) => {
+configRoutes.post('/service/dnsmasq/regenerate', async (req, res) => {
   try {
-    const config = PXEConfigModel.getAll();
-    const configMap: Record<string, string> = {};
-    config.forEach(item => {
-      configMap[item.key] = item.value;
+    const { source, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'config.dnsmasq.regenerate',
+      category: 'config',
+      message: 'Regenerate dnsmasq config',
+      source,
+      created_by,
+      payload: { meta },
+      target_type: 'service',
+      target_id: 'dnsmasq',
     });
 
-    const pxeServerIp = configMap.pxe_server_ip || '192.168.1.10';
-    const dhcpInterface = configMap.dhcp_interface || 'eth0';
-    const dhcpRange = configMap.dhcp_range || '192.168.1.100,192.168.1.200,12h';
-    const pxeServerPort = configMap.pxe_server_port || '3000';
-    const webRoot = configMap.web_root || '/var/www/html';
-    const ipxeMenuUrl = `http://${pxeServerIp}:${pxeServerPort}/ipxe/menu.ipxe`;
-
-    const dnsmasqConfig = `# PXE Server Configuration
-# Generated by Intelligent PXE Server
-
-interface=${dhcpInterface}
-dhcp-range=${dhcpRange}
-dhcp-option=3,${pxeServerIp}
-dhcp-option=6,${pxeServerIp}
-
-enable-tftp
-tftp-root=${webRoot}
-pxe-service=x86PC,"Boot from network",pxelinux
-pxe-service=x86-64_EFI,"Boot from network (UEFI)",ipxe.efi
-
-dhcp-match=set:ipxe,175
-dhcp-boot=tag:!ipxe,undionly.kpxe,${pxeServerIp},${pxeServerIp}
-dhcp-boot=tag:ipxe,${ipxeMenuUrl}
-
-log-dhcp
-log-queries
-port=0
-`;
-
-    const configPath = process.env.DNSMASQ_CONFIG_PATH;
-
-    if (configPath) {
-      await fs.writeFile(configPath, dnsmasqConfig);
-      logger.info(`dnsmasq configuration regenerated at ${configPath}`);
-      return res.json({
-        success: true,
-        message: 'dnsmasq configuration regenerated (restart dnsmasq to apply)',
-        path: configPath,
-      });
-    }
-
-    await fs.writeFile('/tmp/dnsmasq.conf.pxe', dnsmasqConfig);
-
-    // Copy to /etc/dnsmasq.conf (requires sudo)
-    try {
-      await execAsync(`sudo cp /tmp/dnsmasq.conf.pxe /etc/dnsmasq.conf`);
-      await execAsync('sudo systemctl restart dnsmasq');
-      logger.info('dnsmasq configuration regenerated and restarted');
-      return res.json({ success: true, message: 'dnsmasq configuration regenerated' });
-    } catch (error: any) {
-      logger.error('Failed to update dnsmasq config:', error);
-      return res.status(500).json({ 
-        error: 'Failed to update dnsmasq configuration',
-        details: error.message,
-        config: dnsmasqConfig
-      });
-    }
+    return res.status(202).json({ success: true, jobId: job.id, job });
   } catch (error) {
     logger.error('Error regenerating dnsmasq config:', error);
     return res.status(500).json({ error: 'Failed to regenerate dnsmasq configuration' });
@@ -257,10 +152,21 @@ port=0
 });
 
 // Regenerate iPXE menu
-configRoutes.post('/ipxe/regenerate', async (_req, res) => {
+configRoutes.post('/ipxe/regenerate', async (req, res) => {
   try {
-    const result = await generateIpxeMenu();
-    return res.json({ success: true, message: 'iPXE menu regenerated', path: result.path });
+    const { source, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'config.ipxe.regenerate',
+      category: 'config',
+      message: 'Regenerate iPXE menu',
+      source,
+      created_by,
+      payload: { meta },
+      target_type: 'ipxe',
+      target_id: 'menu',
+    });
+
+    return res.status(202).json({ success: true, jobId: job.id, job });
   } catch (error: any) {
     logger.error('Error regenerating iPXE menu:', error);
     return res.status(500).json({ 

@@ -92,6 +92,10 @@ export async function createServer(): Promise<express.Application> {
   const isoModule = await import('./routes/isos.js');
   app.use('/api/isos', isoModule.isoRoutes);
 
+  // Import job routes (dynamic import)
+  const jobsModule = await import('./routes/jobs.js');
+  app.use('/api/jobs', jobsModule.jobRoutes);
+
   const webRoot = process.env.WEB_ROOT || '/var/www/html';
   const ipxePath = process.env.IPXE_ROOT || path.join(webRoot, 'ipxe');
   const isoPath = process.env.ISO_DIR || path.join(webRoot, 'iso');

@@ -6,11 +6,13 @@ export type AuthRequest = Request;
 /**
  * Middleware to require authentication
  */
-export function requireAuth(req: AuthRequest, res: Response, next: NextFunction): void {
-  // Check cookie first, then header (for cross-origin fallback), then Authorization header
+export async function requireAuth(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  // Check cookie first, then header (for cross-origin fallback), then Authorization header, then query param (SSE)
+  const querySession = typeof req.query?.session_id === 'string' ? req.query.session_id : undefined;
   const sessionId = req.cookies?.session_id 
     || (req.headers['x-session-id'] as string)
-    || req.headers.authorization?.replace('Bearer ', '');
+    || req.headers.authorization?.replace('Bearer ', '')
+    || querySession;
   
   // Log for debugging (remove in production)
   if (process.env.NODE_ENV !== 'production') {
@@ -27,13 +29,13 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
     return;
   }
 
-  const session = SessionModel.findById(sessionId);
+  const session = await SessionModel.findById(sessionId);
   if (!session) {
     res.status(401).json({ error: 'Invalid or expired session' });
     return;
   }
 
-  const user = UserModel.findById(session.user_id);
+  const user = await UserModel.findById(session.user_id);
   if (!user || !user.is_active) {
     res.status(401).json({ error: 'User not found or inactive' });
     return;
@@ -56,7 +58,7 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
  * Middleware to require a specific permission
  */
 export function requirePermission(permissionName: string) {
-  return (req: AuthRequest, res: Response, next: NextFunction): void => {
+  return async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     if (!req.user) {
       res.status(401).json({ error: 'Authentication required' });
       return;
@@ -68,7 +70,7 @@ export function requirePermission(permissionName: string) {
       return;
     }
 
-    if (!PermissionModel.hasPermission(req.user.id, permissionName)) {
+    if (!(await PermissionModel.hasPermission(req.user.id, permissionName))) {
       res.status(403).json({ error: `Permission denied: ${permissionName}` });
       return;
     }
@@ -81,7 +83,7 @@ export function requirePermission(permissionName: string) {
  * Middleware to require any of the specified permissions
  */
 export function requireAnyPermission(...permissionNames: string[]) {
-  return (req: AuthRequest, res: Response, next: NextFunction): void => {
+  return async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
     if (!req.user) {
       res.status(401).json({ error: 'Authentication required' });
       return;
@@ -93,33 +95,33 @@ export function requireAnyPermission(...permissionNames: string[]) {
       return;
     }
 
-    const hasPermission = permissionNames.some(perm => 
-      PermissionModel.hasPermission(req.user!.id, perm)
-    );
-
-    if (!hasPermission) {
-      res.status(403).json({ error: `Permission denied: requires one of ${permissionNames.join(', ')}` });
-      return;
+    for (const perm of permissionNames) {
+      if (await PermissionModel.hasPermission(req.user!.id, perm)) {
+        next();
+        return;
+      }
     }
 
-    next();
+    res.status(403).json({ error: `Permission denied: requires one of ${permissionNames.join(', ')}` });
   };
 }
 
 /**
  * Get current user from request (optional, doesn't fail if not authenticated)
  */
-export function getCurrentUser(req: AuthRequest): typeof req.user {
-  // Check cookie first, then header (for cross-origin fallback), then Authorization header
+export async function getCurrentUser(req: AuthRequest): Promise<typeof req.user> {
+  // Check cookie first, then header (for cross-origin fallback), then Authorization header, then query param (SSE)
+  const querySession = typeof req.query?.session_id === 'string' ? req.query.session_id : undefined;
   const sessionId = req.cookies?.session_id 
     || (req.headers['x-session-id'] as string)
-    || req.headers.authorization?.replace('Bearer ', '');
+    || req.headers.authorization?.replace('Bearer ', '')
+    || querySession;
   if (!sessionId) return undefined;
 
-  const session = SessionModel.findById(sessionId);
+  const session = await SessionModel.findById(sessionId);
   if (!session) return undefined;
 
-  const user = UserModel.findById(session.user_id);
+  const user = await UserModel.findById(session.user_id);
   if (!user || !user.is_active) return undefined;
 
   return {

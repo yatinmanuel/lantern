@@ -10,7 +10,7 @@ export async function createInstaller(
   serverId: number,
   config: InstallerConfig
 ): Promise<BaseInstaller> {
-  const server = ServerModel.findById(serverId);
+  const server = await ServerModel.findById(serverId);
   if (!server) {
     throw new Error(`Server ${serverId} not found`);
   }
@@ -48,7 +48,7 @@ export async function executeInstallation(
   serverId: number,
   config: InstallerConfig
 ): Promise<void> {
-  const installation = InstallationModel.create({
+  const installation = await InstallationModel.create({
     server_id: serverId,
     os_type: config.os,
     config_path: config.config || null,
@@ -60,12 +60,12 @@ export async function executeInstallation(
     const installer = await createInstaller(serverId, config);
     const result = await installer.install();
 
-    InstallationModel.update(installation.id, {
+    await InstallationModel.update(installation.id, {
       status: result.success ? 'completed' : 'failed',
       logs: result.logs,
     });
 
-    ServerModel.update(serverId, {
+    await ServerModel.update(serverId, {
       status: result.success ? 'installed' : 'error',
     });
 
@@ -73,11 +73,11 @@ export async function executeInstallation(
       throw new Error(result.error || 'Installation failed');
     }
   } catch (error) {
-    InstallationModel.update(installation.id, {
+    await InstallationModel.update(installation.id, {
       status: 'failed',
       logs: error instanceof Error ? error.message : 'Unknown error',
     });
-    ServerModel.update(serverId, { status: 'error' });
+    await ServerModel.update(serverId, { status: 'error' });
     throw error;
   }
 }

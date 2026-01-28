@@ -4,6 +4,7 @@ import { ServerCleanupService } from './utils/cleanup.js';
 import { natsManager } from './utils/nats-manager.js';
 import { logger } from './utils/logger.js';
 import { generateIpxeMenu } from './utils/ipxe.js';
+import { startJobNotifications, stopJobNotifications } from './jobs/notifications.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -19,6 +20,8 @@ async function main() {
     // Initialize database
     await initDatabase();
     logger.info('Database initialized');
+
+    await startJobNotifications();
 
     // Generate iPXE menu on startup
     try {
@@ -60,6 +63,7 @@ async function main() {
       if (cleanupService) {
         cleanupService.stop();
       }
+      await stopJobNotifications();
       await natsManager.disconnect();
       server.close(() => {
         closeDatabase();

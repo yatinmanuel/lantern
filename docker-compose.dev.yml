@@ -1,7 +1,25 @@
 services:
+  postgres:
+    container_name: lantern-postgres-dev
+    image: postgres:16-alpine
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lantern}
+      POSTGRES_USER: ${POSTGRES_USER:-lantern}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lantern}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
   nats:
     container_name: lantern-nats-dev
     image: nats:2
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
       - "4222:4222"
@@ -15,6 +33,9 @@ services:
       context: ./dnsmasq
       dockerfile: Dockerfile
     network_mode: host
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -41,15 +62,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     working_dir: /app
     command: >
-      bash -lc "test -x node_modules/.bin/tsx || npm install &&
+      sh -lc "test -d node_modules/pg || npm install &&
       npm run dev:backend"
     environment:
       NODE_ENV: development
       PORT: 3000
       NATS_URL: nats://nats:4222
-      DATABASE_PATH: /app/data/pxe.db
+      DATABASE_URL: postgres://lantern:lantern@postgres:5432/lantern
       OS_FILES_DIR: /var/www/html/os-files
       DNSMASQ_CONFIG_PATH: /var/www/html/dnsmasq.conf
       PXE_SERVER_IP: ${PXE_SERVER_IP:-192.168.1.10}
@@ -69,17 +93,20 @@ services:
     volumes:
       - .:/app
       - backend-node-modules:/app/node_modules
-      - ./data:/app/data
       - ./pxe:/var/www/html
     depends_on:
       - nats
+      - postgres
 
   web:
     container_name: lantern-web-dev
     image: node:20-bookworm
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     working_dir: /app
     command: >
-      bash -lc "test -x node_modules/.bin/next || npm install &&
+      sh -lc "test -d node_modules/next && test -d node_modules/sonner || npm install &&
       npm run dev"
     environment:
       NODE_ENV: development
@@ -94,7 +121,46 @@ services:
     depends_on:
       - backend
 
+  worker:
+    container_name: lantern-worker-dev
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    working_dir: /app
+    command: >
+      sh -lc "test -d node_modules/pg || npm install &&
+      npm run dev:worker"
+    environment:
+      NODE_ENV: development
+      NATS_URL: nats://nats:4222
+      DATABASE_URL: postgres://lantern:lantern@postgres:5432/lantern
+      OS_FILES_DIR: /var/www/html/os-files
+      DNSMASQ_CONFIG_PATH: /var/www/html/dnsmasq.conf
+      PXE_SERVER_IP: ${PXE_SERVER_IP:-192.168.1.10}
+      PXE_SERVER_URL: ${PXE_SERVER_URL:-http://localhost:3000}
+      PXE_SERVER_PORT: ${PXE_SERVER_PORT:-3000}
+      DHCP_INTERFACE: ${DHCP_INTERFACE:-ens18}
+      DHCP_RANGE: ${DHCP_RANGE:-192.168.1.100,192.168.1.200,12h}
+      WEB_ROOT: /var/www/html
+      IPXE_MENU_PATH: /var/www/html/ipxe/menu.ipxe
+      ISO_DIR: /var/www/html/iso
+      ISO_MAX_SIZE_MB: ${ISO_MAX_SIZE_MB:-8192}
+      ALPINE_VERSION: ${ALPINE_VERSION:-latest-stable}
+      ALPINE_MIRROR: ${ALPINE_MIRROR:-https://dl-cdn.alpinelinux.org/alpine}
+      CHOKIDAR_USEPOLLING: "1"
+    volumes:
+      - .:/app
+      - backend-node-modules:/app/node_modules
+      - ./pxe:/var/www/html
+    depends_on:
+      - nats
+      - postgres
+
 volumes:
   nats-data:
   backend-node-modules:
   web-node-modules:
+  postgres-data:

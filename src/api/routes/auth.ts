@@ -14,7 +14,7 @@ authRoutes.post('/login', async (req, res: Response) => {
       return res.status(400).json({ error: 'Username and password are required' });
     }
 
-    const user = UserModel.findByUsername(username);
+    const user = await UserModel.findByUsername(username);
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -29,7 +29,7 @@ authRoutes.post('/login', async (req, res: Response) => {
     }
 
     // Create session
-    const session = SessionModel.create(user.id, 24 * 7); // 7 days
+    const session = await SessionModel.create(user.id, 24 * 7); // 7 days
 
     // Update last login
     await UserModel.updateLastLogin(user.id);
@@ -74,7 +74,7 @@ authRoutes.post('/register', async (req: AuthRequest, res: Response) => {
     }
 
     // Check if any users exist
-    const allUsers = UserModel.findAll();
+    const allUsers = await UserModel.findAll();
     const requiresAuth = allUsers.length > 0;
 
     if (requiresAuth) {
@@ -86,12 +86,12 @@ authRoutes.post('/register', async (req: AuthRequest, res: Response) => {
     }
 
     // Check if username already exists
-    if (UserModel.findByUsername(username)) {
+    if (await UserModel.findByUsername(username)) {
       return res.status(400).json({ error: 'Username already exists' });
     }
 
     // Check if email already exists
-    if (email && UserModel.findByEmail(email)) {
+    if (email && (await UserModel.findByEmail(email))) {
       return res.status(400).json({ error: 'Email already exists' });
     }
 
@@ -128,7 +128,7 @@ authRoutes.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
       return res.status(401).json({ error: 'Not authenticated' });
     }
 
-    const user = UserModel.findById(req.user.id);
+    const user = await UserModel.findById(req.user.id);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -157,7 +157,7 @@ authRoutes.post('/logout', requireAuth, async (req: AuthRequest, res: Response) 
       || req.headers.authorization?.replace('Bearer ', '');
     
     if (sessionId) {
-      SessionModel.delete(sessionId);
+      await SessionModel.delete(sessionId);
     }
 
     res.clearCookie('session_id');

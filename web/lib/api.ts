@@ -1,4 +1,6 @@
 // Use relative URLs when served from backend, or proxy to backend in dev mode
+import type { JobResponse } from './jobs-api';
+import { getSessionHeaders, withSessionHeaders } from './session';
 const API_BASE_URL = typeof window !== 'undefined' 
   ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000')
   : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000');
@@ -45,6 +47,7 @@ export const api = {
   async getServers(): Promise<Server[]> {
     const res = await fetch(`${API_BASE_URL}/api/servers`, {
       credentials: 'include',
+      headers: getSessionHeaders(),
     });
     if (!res.ok) throw new Error('Failed to fetch clients');
     return res.json();
@@ -53,6 +56,7 @@ export const api = {
   async getServer(mac: string): Promise<Server> {
     const res = await fetch(`${API_BASE_URL}/api/servers/${mac}`, {
       credentials: 'include',
+      headers: getSessionHeaders(),
     });
     if (!res.ok) throw new Error('Failed to fetch client');
     return res.json();
@@ -65,7 +69,7 @@ export const api = {
   }): Promise<Server> {
     const res = await fetch(`${API_BASE_URL}/api/servers/register`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: withSessionHeaders({ 'Content-Type': 'application/json' }),
       credentials: 'include',
       body: JSON.stringify(data),
     });
@@ -73,36 +77,41 @@ export const api = {
     return res.json();
   },
 
-  async deleteServer(mac: string): Promise<void> {
+  async deleteServer(mac: string): Promise<JobResponse | void> {
     const res = await fetch(`${API_BASE_URL}/api/servers/${mac}`, {
       method: 'DELETE',
       credentials: 'include',
+      headers: getSessionHeaders(),
     });
     if (!res.ok) throw new Error('Failed to delete client');
+    return res.json().catch(() => undefined);
   },
 
-  async deleteServerById(id: number): Promise<void> {
+  async deleteServerById(id: number): Promise<JobResponse | void> {
     const res = await fetch(`${API_BASE_URL}/api/servers/id/${id}`, {
       method: 'DELETE',
       credentials: 'include',
+      headers: getSessionHeaders(),
     });
     if (!res.ok) throw new Error('Failed to delete client');
+    return res.json().catch(() => undefined);
   },
 
-  async updateServer(id: number, updates: { ip_address?: string; hostname?: string; status?: Server['status'] }): Promise<Server> {
+  async updateServer(id: number, updates: { ip_address?: string; hostname?: string; status?: Server['status'] }): Promise<JobResponse | Server> {
     const res = await fetch(`${API_BASE_URL}/api/servers/id/${id}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: withSessionHeaders({ 'Content-Type': 'application/json' }),
       credentials: 'include',
       body: JSON.stringify(updates),
     });
     if (!res.ok) throw new Error('Failed to update client');
-    return res.json();
+    return res.json().catch(() => ({} as Server));
   },
 
   async getServerTasks(mac: string): Promise<Task[]> {
     const res = await fetch(`${API_BASE_URL}/api/servers/${mac}/tasks/all`, {
       credentials: 'include',
+      headers: getSessionHeaders(),
     });
     if (!res.ok) throw new Error('Failed to fetch tasks');
     return res.json();
@@ -111,39 +120,42 @@ export const api = {
   async getServerInstallations(mac: string): Promise<Installation[]> {
     const res = await fetch(`${API_BASE_URL}/api/servers/${mac}/installations`, {
       credentials: 'include',
+      headers: getSessionHeaders(),
     });
     if (!res.ok) throw new Error('Failed to fetch installations');
     return res.json();
   },
 
-  async rebootServer(id: number): Promise<{ success: boolean; message: string }> {
+  async rebootServer(id: number): Promise<JobResponse | { success: boolean; message: string }> {
     const res = await fetch(`${API_BASE_URL}/api/servers/id/${id}/reboot`, {
       method: 'POST',
       credentials: 'include',
+      headers: getSessionHeaders(),
     });
     if (!res.ok) {
       const error = await res.json();
       throw new Error(error.error || 'Failed to reboot client');
     }
-    return res.json();
+    return res.json().catch(() => ({ success: true, message: 'Queued' }));
   },
 
-  async shutdownServer(id: number): Promise<{ success: boolean; message: string }> {
+  async shutdownServer(id: number): Promise<JobResponse | { success: boolean; message: string }> {
     const res = await fetch(`${API_BASE_URL}/api/servers/id/${id}/shutdown`, {
       method: 'POST',
       credentials: 'include',
+      headers: getSessionHeaders(),
     });
     if (!res.ok) {
       const error = await res.json();
       throw new Error(error.error || 'Failed to shutdown client');
     }
-    return res.json();
+    return res.json().catch(() => ({ success: true, message: 'Queued' }));
   },
 
-  async installOS(id: number, config: { os: string; version?: string; config?: string; disk?: string }): Promise<{ success: boolean; message: string; taskId?: number }> {
+  async installOS(id: number, config: { os: string; version?: string; config?: string; disk?: string }): Promise<JobResponse | { success: boolean; message: string; taskId?: number }> {
     const res = await fetch(`${API_BASE_URL}/api/servers/id/${id}/install`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: withSessionHeaders({ 'Content-Type': 'application/json' }),
       credentials: 'include',
       body: JSON.stringify(config),
     });
@@ -151,6 +163,6 @@ export const api = {
       const error = await res.json();
       throw new Error(error.error || 'Failed to install OS');
     }
-    return res.json();
+    return res.json().catch(() => ({ success: true, message: 'Queued' }));
   },
 };

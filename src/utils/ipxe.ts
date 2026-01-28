@@ -4,7 +4,7 @@ import { IsoModel, PXEConfigModel } from '../database/models.js';
 import { logger } from './logger.js';
 
 export async function generateIpxeMenu(): Promise<{ path: string }> {
-  const config = PXEConfigModel.getAll();
+  const config = await PXEConfigModel.getAll();
   const configMap: Record<string, string> = {};
   config.forEach(item => {
     configMap[item.key] = item.value;
@@ -16,7 +16,7 @@ export async function generateIpxeMenu(): Promise<{ path: string }> {
   const alpineVersion = configMap.alpine_version || 'latest-stable';
   const alpineMirror = configMap.alpine_mirror || 'https://dl-cdn.alpinelinux.org/alpine';
 
-  const isoEntries = IsoModel.getAll().sort((a, b) => a.label.localeCompare(b.label));
+  const isoEntries = (await IsoModel.getAll()).sort((a, b) => a.label.localeCompare(b.label));
   const baseUrl = `http://${pxeServerIp}:${pxeServerPort}`;
 
   const isoMenuItems = isoEntries.map((entry) => {

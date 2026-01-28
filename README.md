@@ -1,6 +1,6 @@
 # Lantern
 
-> PXE server for provisioning bare‑metal machines into Alpine Linux, tracking hardware, and executing OS installs at scale.
+> PXE server for provisioning bare-metal machines into Alpine Linux, tracking hardware, and executing OS installs at scale.
 
 ## Badges
 
@@ -20,13 +20,15 @@
 - **Hardware Discovery**: Automatically collects hardware information from booted servers
 - **File Caching**: Downloads OS files from PXE server (local cache) or internet (fallback)
 - **SSH-Based Execution**: Executes installation commands via SSH on Alpine instances
+- **Job Queue**: All actions run as background jobs with real-time status updates
 
 ## Architecture
 
 1. **PXE Server Application** (Node.js/TypeScript) - Main orchestration and API
 2. **Alpine Linux Agent** - Runs on booted servers to report hardware and execute tasks
-3. **Database** - Tracks servers, hardware info, and installation tasks (SQLite)
-4. **OS Installation System** - Plugin-based installer supporting multiple Linux distributions
+3. **Database** - Tracks servers, hardware info, and jobs (Postgres)
+4. **Job Worker** - Background job runner for ISO imports, config changes, and client actions
+5. **OS Installation System** - Plugin-based installer supporting multiple Linux distributions
 
 ## Requirements
 
@@ -107,11 +109,24 @@ Notes:
    npm start
    ```
 
+## Migration (SQLite -> Postgres)
+
+If you have an existing SQLite database, you can migrate it into Postgres:
+
+```bash
+export DATABASE_PATH=./data/pxe.db
+export DATABASE_URL=postgres://lantern:lantern@localhost:5432/lantern
+npm run migrate
+```
+
 ## Configuration
 
 Key environment variables:
 - `PXE_SERVER_IP` - IP address of the PXE server (default: 192.168.1.10)
-- `DATABASE_PATH` - Path to SQLite database file
+- `DATABASE_URL` - Postgres connection string
+- `POSTGRES_DB` - Postgres database name (Docker)
+- `POSTGRES_USER` - Postgres username (Docker)
+- `POSTGRES_PASSWORD` - Postgres password (Docker)
 - `OS_FILES_DIR` - Directory for OS file cache
 - `NATS_URL` - NATS server URL (use `tls://` for TLS)
 - `NATS_TLS_CA` - Path to CA certificate for NATS TLS
@@ -120,8 +135,8 @@ Key environment variables:
 - `NATS_TLS_HANDSHAKE_FIRST` - Set `true` if server requires TLS first
 
 PXE config values are persisted in the database (`pxe_config`) and can be edited
-in the dashboard under **Settings → PXE Config**. ISO management is available
-under **Settings → ISOs** (upload, extract inside the container, auto‑generate
+in the dashboard under **Settings -> PXE Config**. Image management is available
+under **Images** (upload, extract inside the container, auto-generate
 iPXE menu entries, or scan the ISO directory for manually copied files).
 
 ## Usage

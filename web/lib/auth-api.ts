@@ -1,3 +1,5 @@
+import type { JobResponse } from './jobs-api';
+
 const API_BASE_URL = typeof window !== 'undefined' 
   ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000')
   : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000');
@@ -182,7 +184,7 @@ export const userApi = {
     full_name?: string;
     role_ids?: number[];
     permission_ids?: number[];
-  }): Promise<User> {
+  }): Promise<User | JobResponse> {
     const sessionId = getSessionId();
     const headers: HeadersInit = { 'Content-Type': 'application/json' };
     
@@ -200,7 +202,7 @@ export const userApi = {
       const error = await res.json().catch(() => ({ error: 'Failed to create user' }));
       throw new Error(error.error || 'Failed to create user');
     }
-    return res.json();
+    return res.json().catch(() => ({} as User));
   },
 
   async updateUser(id: number, data: {
@@ -211,7 +213,7 @@ export const userApi = {
     is_superuser?: boolean;
     role_ids?: number[];
     permission_ids?: number[];
-  }): Promise<User> {
+  }): Promise<User | JobResponse> {
     const sessionId = getSessionId();
     const headers: HeadersInit = { 'Content-Type': 'application/json' };
     
@@ -229,10 +231,10 @@ export const userApi = {
       const error = await res.json().catch(() => ({ error: 'Failed to update user' }));
       throw new Error(error.error || 'Failed to update user');
     }
-    return res.json();
+    return res.json().catch(() => ({} as User));
   },
 
-  async deleteUser(id: number): Promise<void> {
+  async deleteUser(id: number): Promise<JobResponse | void> {
     const sessionId = getSessionId();
     const headers: HeadersInit = {};
     
@@ -249,6 +251,7 @@ export const userApi = {
       const error = await res.json().catch(() => ({ error: 'Failed to delete user' }));
       throw new Error(error.error || 'Failed to delete user');
     }
+    return res.json().catch(() => undefined);
   },
 
   async getRoles(): Promise<Role[]> {
@@ -293,7 +296,7 @@ export const userApi = {
     name: string;
     description?: string;
     permission_ids?: number[];
-  }): Promise<Role> {
+  }): Promise<Role | JobResponse> {
     const sessionId = getSessionId();
     const headers: HeadersInit = { 'Content-Type': 'application/json' };
     
@@ -311,14 +314,14 @@ export const userApi = {
       const error = await res.json().catch(() => ({ error: 'Failed to create role' }));
       throw new Error(error.error || 'Failed to create role');
     }
-    return res.json();
+    return res.json().catch(() => ({} as Role));
   },
 
   async updateRole(id: number, data: {
     name?: string;
     description?: string;
     permission_ids?: number[];
-  }): Promise<Role> {
+  }): Promise<Role | JobResponse> {
     const sessionId = getSessionId();
     const headers: HeadersInit = { 'Content-Type': 'application/json' };
     
@@ -336,10 +339,10 @@ export const userApi = {
       const error = await res.json().catch(() => ({ error: 'Failed to update role' }));
       throw new Error(error.error || 'Failed to update role');
     }
-    return res.json();
+    return res.json().catch(() => ({} as Role));
   },
 
-  async deleteRole(id: number): Promise<void> {
+  async deleteRole(id: number): Promise<JobResponse | void> {
     const sessionId = getSessionId();
     const headers: HeadersInit = {};
     
@@ -356,6 +359,7 @@ export const userApi = {
       const error = await res.json().catch(() => ({ error: 'Failed to delete role' }));
       throw new Error(error.error || 'Failed to delete role');
     }
+    return res.json().catch(() => undefined);
   },
 
   async createPermission(data: {
@@ -363,7 +367,7 @@ export const userApi = {
     resource: string;
     action: string;
     description?: string;
-  }): Promise<Permission> {
+  }): Promise<Permission | JobResponse> {
     const sessionId = getSessionId();
     const headers: HeadersInit = { 'Content-Type': 'application/json' };
     
@@ -381,7 +385,7 @@ export const userApi = {
       const error = await res.json().catch(() => ({ error: 'Failed to create permission' }));
       throw new Error(error.error || 'Failed to create permission');
     }
-    return res.json();
+    return res.json().catch(() => ({} as Permission));
   },
 
   async updatePermission(id: number, data: {
@@ -389,7 +393,7 @@ export const userApi = {
     resource?: string;
     action?: string;
     description?: string;
-  }): Promise<Permission> {
+  }): Promise<Permission | JobResponse> {
     const sessionId = getSessionId();
     const headers: HeadersInit = { 'Content-Type': 'application/json' };
     
@@ -407,10 +411,10 @@ export const userApi = {
       const error = await res.json().catch(() => ({ error: 'Failed to update permission' }));
       throw new Error(error.error || 'Failed to update permission');
     }
-    return res.json();
+    return res.json().catch(() => ({} as Permission));
   },
 
-  async deletePermission(id: number): Promise<void> {
+  async deletePermission(id: number): Promise<JobResponse | void> {
     const sessionId = getSessionId();
     const headers: HeadersInit = {};
     
@@ -427,5 +431,6 @@ export const userApi = {
       const error = await res.json().catch(() => ({ error: 'Failed to delete permission' }));
       throw new Error(error.error || 'Failed to delete permission');
     }
+    return res.json().catch(() => undefined);
   },
 };

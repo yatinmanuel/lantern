@@ -2,53 +2,34 @@ import { Router, Response } from 'express';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import multer from 'multer';
-import { IsoModel, PXEConfigModel } from '../../database/models.js';
+import { URL } from 'url';
+import { IsoModel } from '../../database/models.js';
 import { logger } from '../../utils/logger.js';
 import { AuthRequest, requireAuth, requirePermission } from '../../utils/auth.js';
 import { getParamValue } from '../../utils/params.js';
-import { generateIpxeMenu } from '../../utils/ipxe.js';
+import { enqueueJob } from '../../jobs/service.js';
+import { buildJobMeta } from '../../jobs/request-context.js';
+import { fetchRemoteMetadata, getIsoDir, getBaseUrl, sanitizeName, ensureDirSync, listExtractedFiles } from '../../utils/iso-tools.js';
 
 export const isoRoutes = Router();
-const execFileAsync = promisify(execFile);
-
-function getIsoDir(): string {
-  const config = PXEConfigModel.getAll();
-  const configMap: Record<string, string> = {};
-  config.forEach(item => {
-    configMap[item.key] = item.value;
-  });
-  const webRoot = configMap.web_root || process.env.WEB_ROOT || '/var/www/html';
-  return configMap.iso_dir || process.env.ISO_DIR || path.join(webRoot, 'iso');
-}
-
-function ensureDirSync(dir: string): void {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
-
-function getBaseUrl(): string {
-  const config = PXEConfigModel.getAll();
-  const configMap: Record<string, string> = {};
-  config.forEach(item => {
-    configMap[item.key] = item.value;
-  });
-  const ip = configMap.pxe_server_ip || '192.168.1.10';
-  const port = configMap.pxe_server_port || '3000';
-  return `http://${ip}:${port}`;
-}
 
 const maxSizeMb = parseInt(process.env.ISO_MAX_SIZE_MB || '8192', 10);
 const maxSizeBytes = maxSizeMb * 1024 * 1024;
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    const isoDir = getIsoDir();
-    ensureDirSync(isoDir);
-    cb(null, isoDir);
+    void getIsoDir()
+      .then((isoDir) => {
+        ensureDirSync(isoDir);
+        cb(null, isoDir);
+      })
+      .catch((error) => {
+        logger.warn('Failed to resolve ISO directory, using fallback:', error);
+        const fallback = process.env.ISO_DIR || '/var/www/html/iso';
+        ensureDirSync(fallback);
+        cb(null, fallback);
+      });
   },
   filename: (_req, file, cb) => {
     const base = path.basename(file.originalname);
@@ -69,154 +50,40 @@ const upload = multer({
   },
 });
 
-async function extractIso(isoPath: string, destDir: string): Promise<void> {
-  await fsp.mkdir(destDir, { recursive: true });
-  const marker = path.join(destDir, '.lantern-extracted');
-  if (fs.existsSync(marker)) {
-    return;
-  }
-  try {
-    await execFileAsync('bsdtar', ['-xf', isoPath, '-C', destDir]);
-  } catch (error) {
-    logger.warn('bsdtar failed, trying 7z:', error);
-    await execFileAsync('7z', ['x', `-o${destDir}`, isoPath]);
-  }
-  await fsp.writeFile(marker, new Date().toISOString());
-}
+const manualStorage = multer.diskStorage({
+  destination: (req, _file, cb) => {
+    void getIsoDir()
+      .then((isoDir) => {
+        const label = typeof req.body.label === 'string' ? req.body.label : 'manual';
+        const safeLabel = sanitizeName(label);
+        const destDir = path.join(isoDir, 'manual', safeLabel);
+        ensureDirSync(destDir);
+        cb(null, destDir);
+      })
+      .catch((error) => {
+        logger.warn('Failed to resolve ISO directory for manual upload, using fallback:', error);
+        const fallback = process.env.ISO_DIR || '/var/www/html/iso';
+        const label = typeof req.body.label === 'string' ? req.body.label : 'manual';
+        const safeLabel = sanitizeName(label);
+        const destDir = path.join(fallback, 'manual', safeLabel);
+        ensureDirSync(destDir);
+        cb(null, destDir);
+      });
+  },
+  filename: (_req, file, cb) => {
+    const safe = sanitizeName(file.originalname || file.fieldname);
+    cb(null, safe);
+  },
+});
 
-function fileExists(filePath: string): boolean {
-  try {
-    return fs.existsSync(filePath);
-  } catch {
-    return false;
-  }
-}
-
-function detectIsoEntry(isoName: string, destDir: string): {
-  iso_name: string;
-  label: string;
-  os_type: string;
-  kernel_path: string;
-  initrd_items: { path: string; name?: string }[];
-  boot_args: string | null;
-} | null {
-  const baseName = isoName.replace(/\.iso$/i, '');
-  const isoBasePath = `/iso/${encodeURIComponent(baseName)}`;
-  const baseUrl = getBaseUrl();
-  const label = baseName;
-
-  const casperKernel = path.join(destDir, 'casper', 'vmlinuz');
-  if (fileExists(casperKernel)) {
-    const initrdCandidates = ['initrd', 'initrd.lz', 'initrd.gz', 'initrd.xz'];
-    const initrdRel = initrdCandidates.find(candidate => fileExists(path.join(destDir, 'casper', candidate)));
-    if (initrdRel) {
-      return {
-        iso_name: isoName,
-        label,
-        os_type: 'ubuntu',
-        kernel_path: `${isoBasePath}/casper/vmlinuz`,
-        initrd_items: [{ path: `${isoBasePath}/casper/${initrdRel}` }],
-        boot_args: 'boot=casper ip=dhcp',
-      };
-    }
-  }
-
-  const liveKernel = path.join(destDir, 'live', 'vmlinuz');
-  const liveInitrd = path.join(destDir, 'live', 'initrd.img');
-  if (fileExists(liveKernel) && fileExists(liveInitrd)) {
-    return {
-      iso_name: isoName,
-      label,
-      os_type: 'debian',
-      kernel_path: `${isoBasePath}/live/vmlinuz`,
-      initrd_items: [{ path: `${isoBasePath}/live/initrd.img` }],
-      boot_args: 'boot=live ip=dhcp',
-    };
-  }
-
-  const fedoraKernel = path.join(destDir, 'images', 'pxeboot', 'vmlinuz');
-  const fedoraInitrd = path.join(destDir, 'images', 'pxeboot', 'initrd.img');
-  if (fileExists(fedoraKernel) && fileExists(fedoraInitrd)) {
-    return {
-      iso_name: isoName,
-      label,
-      os_type: 'fedora',
-      kernel_path: `${isoBasePath}/images/pxeboot/vmlinuz`,
-      initrd_items: [{ path: `${isoBasePath}/images/pxeboot/initrd.img` }],
-      boot_args: `inst.stage2=${baseUrl}${isoBasePath} inst.repo=${baseUrl}${isoBasePath} ip=dhcp`,
-    };
-  }
-
-  const archKernel = path.join(destDir, 'arch', 'boot', 'x86_64', 'vmlinuz-linux');
-  const archInitrd = path.join(destDir, 'arch', 'boot', 'x86_64', 'initramfs-linux.img');
-  if (fileExists(archKernel) && fileExists(archInitrd)) {
-    return {
-      iso_name: isoName,
-      label,
-      os_type: 'arch',
-      kernel_path: `${isoBasePath}/arch/boot/x86_64/vmlinuz-linux`,
-      initrd_items: [{ path: `${isoBasePath}/arch/boot/x86_64/initramfs-linux.img` }],
-      boot_args: `archisobasedir=arch archiso_http_srv=${baseUrl} archiso_http_dir=${isoBasePath} ip=dhcp`,
-    };
-  }
-
-  const suseKernel = path.join(destDir, 'boot', 'x86_64', 'loader', 'linux');
-  const suseInitrd = path.join(destDir, 'boot', 'x86_64', 'loader', 'initrd');
-  if (fileExists(suseKernel) && fileExists(suseInitrd)) {
-    return {
-      iso_name: isoName,
-      label,
-      os_type: 'opensuse',
-      kernel_path: `${isoBasePath}/boot/x86_64/loader/linux`,
-      initrd_items: [{ path: `${isoBasePath}/boot/x86_64/loader/initrd` }],
-      boot_args: `install=${baseUrl}${isoBasePath} ip=dhcp`,
-    };
-  }
-
-  const windowsWim = path.join(destDir, 'sources', 'boot.wim');
-  const bootSdi = path.join(destDir, 'boot', 'boot.sdi');
-  const bootBcd = path.join(destDir, 'boot', 'bcd');
-  const bootMgr = path.join(destDir, 'bootmgr');
-  const bootMgrEfi = path.join(destDir, 'bootmgr.efi');
-  if (fileExists(windowsWim) && fileExists(bootSdi) && fileExists(bootBcd) && (fileExists(bootMgr) || fileExists(bootMgrEfi))) {
-    const bootMgrPath = fileExists(bootMgr) ? `${isoBasePath}/bootmgr` : `${isoBasePath}/bootmgr.efi`;
-    return {
-      iso_name: isoName,
-      label,
-      os_type: 'windows',
-      kernel_path: '/ipxe/wimboot',
-      initrd_items: [
-        { path: bootMgrPath, name: 'bootmgr' },
-        { path: `${isoBasePath}/boot/bcd`, name: 'BCD' },
-        { path: `${isoBasePath}/boot/boot.sdi`, name: 'boot.sdi' },
-        { path: `${isoBasePath}/sources/boot.wim`, name: 'boot.wim' },
-      ],
-      boot_args: null,
-    };
-  }
-
-  return null;
-}
-
-async function processIsoFile(filePath: string): Promise<void> {
-  const isoDir = getIsoDir();
-  const fileName = path.basename(filePath);
-  const baseName = fileName.replace(/\.iso$/i, '');
-  const destDir = path.join(isoDir, baseName);
-
-  await fsp.rm(destDir, { recursive: true, force: true });
-  await extractIso(filePath, destDir);
-  const entry = detectIsoEntry(fileName, destDir);
-  if (!entry) {
-    throw new Error('Unsupported ISO layout. Could not detect boot files.');
-  }
-  IsoModel.upsert(entry);
-  await generateIpxeMenu();
-}
+const manualUpload = multer({
+  storage: manualStorage,
+  limits: { fileSize: maxSizeBytes },
+});
 
 isoRoutes.get('/', requireAuth, requirePermission('config.view'), async (_req: AuthRequest, res: Response) => {
   try {
-    const isoDir = getIsoDir();
+    const isoDir = await getIsoDir();
     ensureDirSync(isoDir);
     const entries = await fsp.readdir(isoDir, { withFileTypes: true });
     const files = await Promise.all(entries.filter(e => e.isFile()).map(async (entry) => {
@@ -228,15 +95,41 @@ isoRoutes.get('/', requireAuth, requirePermission('config.view'), async (_req: A
         modified_at: stats.mtime.toISOString(),
       };
     }));
-    const baseUrl = getBaseUrl();
-    const items = files
+
+    const isoEntries = await IsoModel.getAll();
+    const entryMap = new Map(isoEntries.map(entry => [entry.iso_name, entry]));
+    const isoNames = new Set(files.map(file => file.name));
+    const baseUrl = await getBaseUrl();
+
+    const fileItems = files
       .filter(file => file.name.toLowerCase().endsWith('.iso'))
-      .sort((a, b) => b.modified_at.localeCompare(a.modified_at))
-      .map(file => ({
-        ...file,
-        url: `${baseUrl}/iso/${encodeURIComponent(file.name)}`,
-        entry: IsoModel.findByIsoName(file.name),
+      .map(file => {
+        const entry = entryMap.get(file.name) || null;
+        return {
+          id: file.name,
+          name: entry?.label || file.name,
+          size: file.size,
+          modified_at: file.modified_at,
+          url: `${baseUrl}/iso/${encodeURIComponent(file.name)}`,
+          entry,
+        };
+      });
+
+    const manualItems = isoEntries
+      .filter(entry => !isoNames.has(entry.iso_name))
+      .map(entry => ({
+        id: entry.iso_name,
+        name: entry.label || entry.iso_name,
+        size: 0,
+        modified_at: entry.created_at || new Date().toISOString(),
+        url: null,
+        entry,
       }));
+
+    const items = [...fileItems, ...manualItems].sort((a, b) =>
+      b.modified_at.localeCompare(a.modified_at)
+    );
+
     return res.json(items);
   } catch (error) {
     logger.error('Error listing ISOs:', error);
@@ -244,8 +137,85 @@ isoRoutes.get('/', requireAuth, requirePermission('config.view'), async (_req: A
   }
 });
 
+isoRoutes.get('/extracted/:name/files', requireAuth, requirePermission('config.view'), async (req: AuthRequest, res: Response) => {
+  try {
+    const isoName = getParamValue(req.params.name);
+    if (!isoName) {
+      return res.status(400).json({ error: 'Missing ISO name' });
+    }
+
+    const files = await listExtractedFiles(isoName);
+    return res.json(files);
+  } catch (error) {
+    logger.error('Error listing extracted files:', error);
+    return res.status(500).json({ error: 'Failed to list extracted files' });
+  }
+});
+
+isoRoutes.post('/attach', requireAuth, requirePermission('config.edit'), async (req: AuthRequest, res: Response) => {
+  try {
+    const isoName = typeof req.body?.iso_name === 'string' ? req.body.iso_name.trim() : '';
+    const label = typeof req.body?.label === 'string' ? req.body.label.trim() : '';
+    const osType = typeof req.body?.os_type === 'string' && req.body.os_type.trim()
+      ? req.body.os_type.trim()
+      : 'custom';
+    const bootArgs = typeof req.body?.boot_args === 'string' && req.body.boot_args.trim()
+      ? req.body.boot_args.trim()
+      : undefined;
+    const kernelPath = typeof req.body?.kernel_path === 'string' ? req.body.kernel_path.trim() : '';
+    const initrdPaths = Array.isArray(req.body?.initrd_paths) ? req.body.initrd_paths : [];
+
+    if (!isoName) {
+      return res.status(400).json({ error: 'iso_name is required' });
+    }
+    if (!label) {
+      return res.status(400).json({ error: 'label is required' });
+    }
+    if (!kernelPath) {
+      return res.status(400).json({ error: 'kernel_path is required' });
+    }
+    if (!initrdPaths.length) {
+      return res.status(400).json({ error: 'initrd_paths is required' });
+    }
+
+    const normalizedInitrd = initrdPaths
+      .filter((value: any) => typeof value === 'string' && value.trim())
+      .map((value: string) => value.trim());
+
+    const isInvalidPath = (value: string) => !value.startsWith('/iso/');
+    if (isInvalidPath(kernelPath) || normalizedInitrd.some(isInvalidPath)) {
+      return res.status(400).json({ error: 'Kernel/initrd paths must start with /iso/' });
+    }
+
+    const { source, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'images.attach',
+      category: 'images',
+      message: `Attach boot files for ${isoName}`,
+      source,
+      created_by,
+      payload: {
+        iso_name: isoName,
+        label,
+        os_type: osType,
+        kernel_path: kernelPath,
+        initrd_paths: normalizedInitrd,
+        boot_args: bootArgs,
+        meta,
+      },
+      target_type: 'image',
+      target_id: isoName,
+    });
+
+    return res.status(202).json({ success: true, jobId: job.id, job });
+  } catch (error) {
+    logger.error('Error attaching boot files:', error);
+    return res.status(500).json({ error: 'Failed to attach boot files' });
+  }
+});
+
 isoRoutes.post('/', requireAuth, requirePermission('config.edit'), (req: AuthRequest, res: Response) => {
-  upload.single('file')(req as any, res as any, (err) => {
+  upload.single('file')(req as any, res as any, async (err) => {
     if (err) {
       logger.error('ISO upload failed:', err);
       res.status(400).json({ error: err.message || 'Upload failed' });
@@ -256,43 +226,204 @@ isoRoutes.post('/', requireAuth, requirePermission('config.edit'), (req: AuthReq
       res.status(400).json({ error: 'No file uploaded' });
       return;
     }
-    void processIsoFile(file.path)
-      .then(() => {
-        res.json({ success: true, name: file.filename, size: file.size });
-      })
-      .catch((processError) => {
-        logger.error('ISO processing failed:', processError);
-        res.status(500).json({ error: processError instanceof Error ? processError.message : 'ISO processing failed' });
+
+    try {
+      const { source, created_by, meta } = buildJobMeta(req);
+      const job = await enqueueJob({
+        type: 'images.extract',
+        category: 'images',
+        message: `Import image ${file.filename}`,
+        source,
+        created_by,
+        payload: {
+          filePath: file.path,
+          fileName: file.filename,
+          size: file.size,
+          meta,
+        },
+        target_type: 'image',
+        target_id: file.filename,
       });
+
+      res.status(202).json({ success: true, jobId: job.id, job });
+    } catch (queueError) {
+      logger.error('ISO queue failed:', queueError);
+      res.status(500).json({ error: 'Failed to queue image import' });
+    }
   });
 });
 
-isoRoutes.post('/scan', requireAuth, requirePermission('config.edit'), async (_req: AuthRequest, res: Response) => {
-  try {
-    const isoDir = getIsoDir();
-    ensureDirSync(isoDir);
-    const entries = await fsp.readdir(isoDir, { withFileTypes: true });
-    const isoFiles = entries
-      .filter(entry => entry.isFile() && entry.name.toLowerCase().endsWith('.iso'))
-      .map(entry => entry.name);
-
-    const results: { name: string; status: string; error?: string }[] = [];
-    for (const isoName of isoFiles) {
-      if (IsoModel.findByIsoName(isoName)) {
-        results.push({ name: isoName, status: 'skipped' });
-        continue;
-      }
-      try {
-        await processIsoFile(path.join(isoDir, isoName));
-        results.push({ name: isoName, status: 'imported' });
-      } catch (error) {
-        results.push({ name: isoName, status: 'failed', error: error instanceof Error ? error.message : 'Failed' });
-      }
+isoRoutes.post('/manual', requireAuth, requirePermission('config.edit'), (req: AuthRequest, res: Response) => {
+  manualUpload.fields([
+    { name: 'kernel', maxCount: 1 },
+    { name: 'initrd', maxCount: 1 },
+  ])(req as any, res as any, async (err) => {
+    if (err) {
+      logger.error('Manual image upload failed:', err);
+      res.status(400).json({ error: err.message || 'Upload failed' });
+      return;
     }
 
-    return res.json({ success: true, results });
+    const label = typeof req.body.label === 'string' ? req.body.label.trim() : '';
+    if (!label) {
+      res.status(400).json({ error: 'Label is required' });
+      return;
+    }
+
+    const files = req.files as { [field: string]: Express.Multer.File[] } | undefined;
+    const kernel = files?.kernel?.[0];
+    const initrd = files?.initrd?.[0];
+    if (!kernel || !initrd) {
+      res.status(400).json({ error: 'Both kernel and initramfs are required' });
+      return;
+    }
+
+    const safeLabel = sanitizeName(label);
+    const osType = typeof req.body.os_type === 'string' && req.body.os_type.trim()
+      ? req.body.os_type.trim()
+      : 'custom';
+    const bootArgs = typeof req.body.boot_args === 'string' && req.body.boot_args.trim()
+      ? req.body.boot_args.trim()
+      : undefined;
+
+    try {
+      const { source, created_by, meta } = buildJobMeta(req);
+      const job = await enqueueJob({
+        type: 'images.manual',
+        category: 'images',
+        message: `Add manual image ${label}`,
+        source,
+        created_by,
+        payload: {
+          label,
+          safeLabel,
+          osType,
+          bootArgs,
+          kernelFilename: kernel.filename,
+          initrdFilename: initrd.filename,
+          meta,
+        },
+        target_type: 'image',
+        target_id: `manual:${safeLabel}`,
+      });
+
+      res.status(202).json({ success: true, jobId: job.id, job });
+    } catch (queueError) {
+      logger.error('Manual image queue failed:', queueError);
+      res.status(500).json({ error: 'Failed to queue manual image' });
+    }
+  });
+});
+
+isoRoutes.post('/remote', requireAuth, requirePermission('config.edit'), async (req: AuthRequest, res: Response) => {
+  const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+  if (!url) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return res.status(400).json({ error: 'Invalid URL' });
+  }
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    return res.status(400).json({ error: 'Only http/https URLs are allowed' });
+  }
+
+  const baseName = path.basename(parsedUrl.pathname || '');
+  const safeName = sanitizeName(baseName || `download-${Date.now()}.iso`);
+  if (!safeName.toLowerCase().endsWith('.iso')) {
+    return res.status(400).json({ error: 'URL must point to a .iso file' });
+  }
+
+  const isoDir = await getIsoDir();
+  ensureDirSync(isoDir);
+  const targetPath = path.join(isoDir, safeName);
+  const existingEntry = await IsoModel.findByIsoName(safeName);
+  const { source, created_by, meta } = buildJobMeta(req);
+
+  if (fs.existsSync(targetPath)) {
+    if (existingEntry) {
+      return res.status(409).json({ error: 'Image already exists' });
+    }
+    const extractJob = await enqueueJob({
+      type: 'images.extract',
+      category: 'images',
+      message: `Extract image ${safeName}`,
+      source,
+      created_by,
+      payload: { filePath: targetPath, fileName: safeName, meta },
+      target_type: 'image',
+      target_id: safeName,
+    });
+    return res.status(202).json({ success: true, jobId: extractJob.id, job: extractJob });
+  }
+
+  const downloadJob = await enqueueJob({
+    type: 'images.download',
+    category: 'images',
+    message: `Download image ${safeName}`,
+    source,
+    created_by,
+    payload: { url, safeName, meta },
+    target_type: 'image',
+    target_id: safeName,
+  });
+
+  return res.status(202).json({ success: true, jobId: downloadJob.id, job: downloadJob });
+});
+
+isoRoutes.post('/remote/meta', requireAuth, requirePermission('config.edit'), async (req: AuthRequest, res: Response) => {
+  const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+  if (!url) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return res.status(400).json({ error: 'Invalid URL' });
+  }
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    return res.status(400).json({ error: 'Only http/https URLs are allowed' });
+  }
+
+  try {
+    const meta = await fetchRemoteMetadata(url);
+    const fallbackName = path.basename(parsedUrl.pathname || '') || null;
+    const name = meta.fileName || fallbackName;
+    return res.json({
+      url,
+      fileName: name,
+      size: meta.size,
+      mimeType: meta.mimeType,
+      isIso: name ? name.toLowerCase().endsWith('.iso') : false,
+    });
   } catch (error) {
-    logger.error('ISO scan failed:', error);
+    logger.error('Remote URL metadata fetch failed:', error);
+    return res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to query URL' });
+  }
+});
+
+isoRoutes.post('/scan', requireAuth, requirePermission('config.edit'), async (req: AuthRequest, res: Response) => {
+  try {
+    const { source, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'images.scan',
+      category: 'images',
+      message: 'Scan images directory',
+      source,
+      created_by,
+      payload: { meta },
+      target_type: 'image',
+      target_id: 'scan',
+    });
+
+    return res.status(202).json({ success: true, jobId: job.id, job });
+  } catch (error) {
+    logger.error('ISO scan enqueue failed:', error);
     return res.status(500).json({ error: 'Failed to scan ISOs' });
   }
 });
@@ -303,21 +434,22 @@ isoRoutes.delete('/:name', requireAuth, requirePermission('config.edit'), async 
     if (!rawName) {
       return res.status(400).json({ error: 'Missing ISO name' });
     }
-    const fileName = path.basename(rawName);
-    if (!fileName.toLowerCase().endsWith('.iso')) {
-      return res.status(400).json({ error: 'Invalid ISO name' });
-    }
-    const isoDir = getIsoDir();
-    const filePath = path.join(isoDir, fileName);
-    const destDir = path.join(isoDir, fileName.replace(/\.iso$/i, ''));
-    await fsp.unlink(filePath);
-    await fsp.rm(destDir, { recursive: true, force: true });
-    IsoModel.deleteByIsoName(fileName);
-    await generateIpxeMenu();
-    logger.info(`ISO deleted: ${fileName}`);
-    return res.json({ success: true });
+
+    const { source, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'images.delete',
+      category: 'images',
+      message: `Delete image ${rawName}`,
+      source,
+      created_by,
+      payload: { name: rawName, meta },
+      target_type: 'image',
+      target_id: rawName,
+    });
+
+    return res.status(202).json({ success: true, jobId: job.id, job });
   } catch (error) {
-    logger.error('Error deleting ISO:', error);
+    logger.error('Error queuing ISO delete:', error);
     return res.status(500).json({ error: 'Failed to delete ISO' });
   }
 });

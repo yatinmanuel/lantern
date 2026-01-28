@@ -2,13 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Server, Home, Settings, Image } from 'lucide-react';
+import { Server, Home, Settings, Image, ListChecks } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: Home },
   { name: 'Clients', href: '/servers', icon: Server },
   { name: 'Images', href: '/images', icon: Image },
+  { name: 'Queue', href: '/queue', icon: ListChecks },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 

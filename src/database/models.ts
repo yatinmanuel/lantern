@@ -1,5 +1,4 @@
-import { getDatabase } from './index.js';
-import { logger } from '../utils/logger.js';
+import { getPool } from './index.js';
 
 export interface Server {
   id: number;
@@ -36,7 +35,7 @@ export interface Installation {
 }
 
 export interface PXEConfig {
-  id: number;
+  id?: number;
   key: string;
   value: string;
   description: string | null;
@@ -54,431 +53,318 @@ export interface IsoEntry {
   created_at: string;
 }
 
+function mapServer(row: any): Server {
+  return {
+    ...row,
+    hardware_info: row.hardware_info ?? null,
+    last_seen: row.last_seen || row.created_at,
+  } as Server;
+}
+
 export const ServerModel = {
-  create(server: Omit<Server, 'id' | 'created_at' | 'updated_at' | 'last_seen'>): Server {
-    const db = getDatabase();
-    // Use CURRENT_TIMESTAMP or calculate timestamp in JavaScript
-    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-    const stmt = db.prepare(`
-      INSERT INTO servers (mac_address, ip_address, hostname, status, hardware_info, last_seen)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    const result = stmt.run(
-      server.mac_address,
-      server.ip_address,
-      server.hostname,
-      server.status,
-      JSON.stringify(server.hardware_info),
-      now
+  async create(server: Omit<Server, 'id' | 'created_at' | 'updated_at' | 'last_seen'>): Promise<Server> {
+    const db = getPool();
+    const result = await db.query(
+      `INSERT INTO servers (mac_address, ip_address, hostname, status, hardware_info, last_seen)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       RETURNING *`,
+      [
+        server.mac_address,
+        server.ip_address,
+        server.hostname,
+        server.status,
+        server.hardware_info,
+      ]
     );
-    return this.findById(result.lastInsertRowid as number)!;
+    return mapServer(result.rows[0]);
   },
 
-  findByMac(macAddress: string): Server | null {
-    const db = getDatabase();
-    const row = db.prepare('SELECT * FROM servers WHERE mac_address = ?').get(macAddress) as any;
-    if (!row) return null;
-    let hardware_info = null;
-    if (row.hardware_info) {
-      try {
-        const trimmed = String(row.hardware_info).trim();
-        if (trimmed && trimmed !== 'null' && trimmed !== '') {
-          hardware_info = JSON.parse(trimmed);
-        }
-      } catch (error) {
-        logger.warn(`Failed to parse hardware_info for server ${row.id}:`, error);
-        hardware_info = null;
-      }
-    }
-    return {
-      ...row,
-      hardware_info,
-      last_seen: row.last_seen || row.created_at,
-    };
+  async findByMac(macAddress: string): Promise<Server | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM servers WHERE mac_address = $1', [macAddress]);
+    if (result.rows.length === 0) return null;
+    return mapServer(result.rows[0]);
   },
 
-  findById(id: number): Server | null {
-    const db = getDatabase();
-    const row = db.prepare('SELECT * FROM servers WHERE id = ?').get(id) as any;
-    if (!row) return null;
-    let hardware_info = null;
-    if (row.hardware_info) {
-      try {
-        const trimmed = String(row.hardware_info).trim();
-        if (trimmed && trimmed !== 'null' && trimmed !== '') {
-          hardware_info = JSON.parse(trimmed);
-        }
-      } catch (error) {
-        logger.warn(`Failed to parse hardware_info for server ${row.id}:`, error);
-        hardware_info = null;
-      }
-    }
-    return {
-      ...row,
-      hardware_info,
-      last_seen: row.last_seen || row.created_at,
-    };
+  async findById(id: number): Promise<Server | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM servers WHERE id = $1', [id]);
+    if (result.rows.length === 0) return null;
+    return mapServer(result.rows[0]);
   },
 
-  update(id: number, updates: Partial<Server>): Server {
-    const db = getDatabase();
+  async update(id: number, updates: Partial<Server>): Promise<Server> {
+    const db = getPool();
     const fields: string[] = [];
     const values: any[] = [];
+    let idx = 1;
 
     if (updates.ip_address !== undefined) {
-      fields.push('ip_address = ?');
+      fields.push(`ip_address = $${idx++}`);
       values.push(updates.ip_address);
     }
     if (updates.hostname !== undefined) {
-      fields.push('hostname = ?');
+      fields.push(`hostname = $${idx++}`);
       values.push(updates.hostname);
     }
     if (updates.status !== undefined) {
-      fields.push('status = ?');
+      fields.push(`status = $${idx++}`);
       values.push(updates.status);
     }
     if (updates.hardware_info !== undefined) {
-      fields.push('hardware_info = ?');
-      values.push(JSON.stringify(updates.hardware_info));
+      fields.push(`hardware_info = $${idx++}`);
+      values.push(updates.hardware_info);
     }
 
     if (fields.length === 0) {
-      return this.findById(id)!;
+      const existing = await this.findById(id);
+      return existing!;
     }
 
-    // Calculate timestamp in JavaScript
-    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-    fields.push('updated_at = ?');
-    values.push(now);
+    fields.push('updated_at = NOW()');
     values.push(id);
 
-    const stmt = db.prepare(`UPDATE servers SET ${fields.join(', ')} WHERE id = ?`);
-    stmt.run(...values);
-    return this.findById(id)!;
+    const result = await db.query(
+      `UPDATE servers SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return mapServer(result.rows[0]);
   },
 
-  findAll(): Server[] {
-    const db = getDatabase();
-    const rows = db.prepare('SELECT * FROM servers ORDER BY created_at DESC').all() as any[];
-    return rows.map(row => {
-      let hardware_info = null;
-      if (row.hardware_info) {
-        try {
-          const trimmed = String(row.hardware_info).trim();
-          if (trimmed && trimmed !== 'null' && trimmed !== '') {
-            hardware_info = JSON.parse(trimmed);
-          }
-        } catch (error) {
-          logger.warn(`Failed to parse hardware_info for server ${row.id}:`, error);
-          hardware_info = null;
-        }
-      }
-      return {
-      ...row,
-        hardware_info,
-        last_seen: row.last_seen || row.created_at,
-      };
-    });
+  async findAll(): Promise<Server[]> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM servers ORDER BY created_at DESC');
+    return result.rows.map(mapServer);
   },
 
-  delete(id: number): boolean {
-    const db = getDatabase();
-    
-    // First, delete related tasks and installations (cascade delete)
-    // SQLite doesn't enforce foreign keys by default, but we'll do it explicitly
-    try {
-      db.prepare('DELETE FROM tasks WHERE server_id = ?').run(id);
-      db.prepare('DELETE FROM installations WHERE server_id = ?').run(id);
-    } catch (error) {
-      logger.warn(`Error deleting related records for server ${id}:`, error);
-      // Continue with server deletion even if related records fail
-    }
-    
-    // Then delete the server
-    const stmt = db.prepare('DELETE FROM servers WHERE id = ?');
-    const result = stmt.run(id);
-    return result.changes > 0;
+  async delete(id: number): Promise<boolean> {
+    const db = getPool();
+    const result = await db.query('DELETE FROM servers WHERE id = $1', [id]);
+    return (result.rowCount ?? 0) > 0;
   },
 
-  updateLastSeen(id: number): void {
-    const db = getDatabase();
-    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-    const stmt = db.prepare('UPDATE servers SET last_seen = ? WHERE id = ?');
-    stmt.run(now, id);
+  async updateLastSeen(id: number): Promise<void> {
+    const db = getPool();
+    await db.query('UPDATE servers SET last_seen = NOW() WHERE id = $1', [id]);
   },
 
-  updateLastSeenByMac(macAddress: string): void {
-    const db = getDatabase();
-    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-    const stmt = db.prepare('UPDATE servers SET last_seen = ? WHERE mac_address = ?');
-    stmt.run(now, macAddress);
+  async updateLastSeenByMac(macAddress: string): Promise<void> {
+    const db = getPool();
+    await db.query('UPDATE servers SET last_seen = NOW() WHERE mac_address = $1', [macAddress]);
   },
 
-  findStaleServers(timeoutSeconds: number): Server[] {
-    const db = getDatabase();
-    try {
-      // Calculate threshold time: now - timeoutSeconds
-      // SQLite datetime format: 'YYYY-MM-DD HH:MM:SS'
-      const threshold = new Date(Date.now() - timeoutSeconds * 1000).toISOString().replace('T', ' ').slice(0, 19);
-      // Include servers with NULL last_seen (old servers before migration) or last_seen older than threshold
-      const stmt = db.prepare(`
-        SELECT * FROM servers 
-        WHERE last_seen IS NULL OR last_seen < ?
-        ORDER BY COALESCE(last_seen, created_at) ASC
-      `);
-      const rows = stmt.all(threshold) as any[];
-      return rows.map(row => {
-        try {
-          return {
-            ...row,
-            hardware_info: row.hardware_info ? JSON.parse(row.hardware_info) : null,
-            last_seen: row.last_seen || row.created_at,
-          };
-        } catch (parseError) {
-          // If JSON parsing fails, return with null hardware_info
-          logger.warn(`Failed to parse hardware_info for server ${row.id}:`, parseError);
-          return {
-            ...row,
-            hardware_info: null,
-            last_seen: row.last_seen || row.created_at,
-          };
-        }
-      });
-    } catch (error) {
-      logger.error('Error in findStaleServers:', error);
-      throw error;
-    }
+  async findStaleServers(timeoutSeconds: number): Promise<Server[]> {
+    const db = getPool();
+    const threshold = new Date(Date.now() - timeoutSeconds * 1000).toISOString();
+    const result = await db.query(
+      `SELECT * FROM servers
+       WHERE last_seen IS NULL OR last_seen < $1
+       ORDER BY COALESCE(last_seen, created_at) ASC`,
+      [threshold]
+    );
+    return result.rows.map(mapServer);
   },
 };
 
 export const TaskModel = {
-  create(task: Omit<Task, 'id' | 'created_at' | 'completed_at'>): Task {
-    const db = getDatabase();
-    const stmt = db.prepare(`
-      INSERT INTO tasks (server_id, type, command, status, result)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-    const result = stmt.run(
-      task.server_id,
-      task.type,
-      task.command,
-      task.status,
-      task.result
+  async create(task: Omit<Task, 'id' | 'created_at' | 'completed_at'>): Promise<Task> {
+    const db = getPool();
+    const result = await db.query(
+      `INSERT INTO tasks (server_id, type, command, status, result)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [task.server_id, task.type, task.command, task.status, task.result]
     );
-    return this.findById(result.lastInsertRowid as number)!;
+    return result.rows[0] as Task;
   },
 
-  findById(id: number): Task | null {
-    const db = getDatabase();
-    const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as any;
-    return row || null;
+  async findById(id: number): Promise<Task | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM tasks WHERE id = $1', [id]);
+    return (result.rows[0] as Task) || null;
   },
 
-  findByServer(serverId: number, status?: string): Task[] {
-    const db = getDatabase();
-    let query = 'SELECT * FROM tasks WHERE server_id = ?';
-    const params: any[] = [serverId];
-    
+  async findByServer(serverId: number, status?: string): Promise<Task[]> {
+    const db = getPool();
     if (status) {
-      query += ' AND status = ?';
-      params.push(status);
+      const result = await db.query(
+        'SELECT * FROM tasks WHERE server_id = $1 AND status = $2 ORDER BY created_at DESC',
+        [serverId, status]
+      );
+      return result.rows as Task[];
     }
-    
-    query += ' ORDER BY created_at DESC';
-    const rows = db.prepare(query).all(...params) as any[];
-    return rows;
+    const result = await db.query(
+      'SELECT * FROM tasks WHERE server_id = $1 ORDER BY created_at DESC',
+      [serverId]
+    );
+    return result.rows as Task[];
   },
 
-  update(id: number, updates: Partial<Task>): Task {
-    const db = getDatabase();
+  async update(id: number, updates: Partial<Task>): Promise<Task> {
+    const db = getPool();
     const fields: string[] = [];
     const values: any[] = [];
+    let idx = 1;
 
     if (updates.status !== undefined) {
-      fields.push('status = ?');
+      fields.push(`status = $${idx++}`);
       values.push(updates.status);
     }
     if (updates.result !== undefined) {
-      fields.push('result = ?');
+      fields.push(`result = $${idx++}`);
       values.push(updates.result);
     }
     if (updates.status === 'completed' || updates.status === 'failed') {
-      const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-      fields.push('completed_at = ?');
-      values.push(now);
+      fields.push('completed_at = NOW()');
     }
 
     if (fields.length === 0) {
-      return this.findById(id)!;
+      const existing = await this.findById(id);
+      return existing!;
     }
 
     values.push(id);
-    const stmt = db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`);
-    stmt.run(...values);
-    return this.findById(id)!;
+    const result = await db.query(
+      `UPDATE tasks SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return result.rows[0] as Task;
   },
 };
 
 export const InstallationModel = {
-  create(installation: Omit<Installation, 'id' | 'started_at' | 'completed_at'>): Installation {
-    const db = getDatabase();
-    const stmt = db.prepare(`
-      INSERT INTO installations (server_id, os_type, config_path, status, logs)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-    const result = stmt.run(
-      installation.server_id,
-      installation.os_type,
-      installation.config_path,
-      installation.status,
-      installation.logs
+  async create(installation: Omit<Installation, 'id' | 'started_at' | 'completed_at'>): Promise<Installation> {
+    const db = getPool();
+    const result = await db.query(
+      `INSERT INTO installations (server_id, os_type, config_path, status, logs)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [installation.server_id, installation.os_type, installation.config_path, installation.status, installation.logs]
     );
-    return this.findById(result.lastInsertRowid as number)!;
+    return result.rows[0] as Installation;
   },
 
-  findById(id: number): Installation | null {
-    const db = getDatabase();
-    const row = db.prepare('SELECT * FROM installations WHERE id = ?').get(id) as any;
-    return row || null;
+  async findById(id: number): Promise<Installation | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM installations WHERE id = $1', [id]);
+    return (result.rows[0] as Installation) || null;
   },
 
-  findByServer(serverId: number): Installation[] {
-    const db = getDatabase();
-    const rows = db.prepare('SELECT * FROM installations WHERE server_id = ? ORDER BY started_at DESC').all(serverId) as any[];
-    return rows;
+  async findByServer(serverId: number): Promise<Installation[]> {
+    const db = getPool();
+    const result = await db.query(
+      'SELECT * FROM installations WHERE server_id = $1 ORDER BY started_at DESC',
+      [serverId]
+    );
+    return result.rows as Installation[];
   },
 
-  update(id: number, updates: Partial<Installation>): Installation {
-    const db = getDatabase();
+  async update(id: number, updates: Partial<Installation>): Promise<Installation> {
+    const db = getPool();
     const fields: string[] = [];
     const values: any[] = [];
+    let idx = 1;
 
     if (updates.status !== undefined) {
-      fields.push('status = ?');
+      fields.push(`status = $${idx++}`);
       values.push(updates.status);
     }
     if (updates.logs !== undefined) {
-      fields.push('logs = ?');
+      fields.push(`logs = $${idx++}`);
       values.push(updates.logs);
     }
     if (updates.status === 'completed' || updates.status === 'failed') {
-      const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-      fields.push('completed_at = ?');
-      values.push(now);
+      fields.push('completed_at = NOW()');
     }
 
     if (fields.length === 0) {
-      return this.findById(id)!;
+      const existing = await this.findById(id);
+      return existing!;
     }
 
     values.push(id);
-    const stmt = db.prepare(`UPDATE installations SET ${fields.join(', ')} WHERE id = ?`);
-    stmt.run(...values);
-    return this.findById(id)!;
+    const result = await db.query(
+      `UPDATE installations SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return result.rows[0] as Installation;
   },
 };
 
 export const PXEConfigModel = {
-  get(key: string): string | null {
-    const db = getDatabase();
-    const row = db.prepare('SELECT value FROM pxe_config WHERE key = ?').get(key) as any;
-    return row?.value || null;
+  async get(key: string): Promise<string | null> {
+    const db = getPool();
+    const result = await db.query('SELECT value FROM pxe_config WHERE key = $1', [key]);
+    return result.rows[0]?.value || null;
   },
 
-  set(key: string, value: string, description?: string): void {
-    const db = getDatabase();
-    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-    const stmt = db.prepare(`
-      INSERT INTO pxe_config (key, value, description, updated_at)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(key) DO UPDATE SET
-        value = excluded.value,
-        description = excluded.description,
-        updated_at = excluded.updated_at
-    `);
-    stmt.run(key, value, description || null, now);
+  async set(key: string, value: string, description?: string): Promise<void> {
+    const db = getPool();
+    await db.query(
+      `INSERT INTO pxe_config (key, value, description, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (key) DO UPDATE SET
+         value = EXCLUDED.value,
+         description = EXCLUDED.description,
+         updated_at = NOW()`,
+      [key, value, description || null]
+    );
   },
 
-  getAll(): PXEConfig[] {
-    const db = getDatabase();
-    const rows = db.prepare('SELECT * FROM pxe_config ORDER BY key').all() as any[];
-    return rows;
+  async getAll(): Promise<PXEConfig[]> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM pxe_config ORDER BY key');
+    return result.rows as PXEConfig[];
   },
 
-  delete(key: string): boolean {
-    const db = getDatabase();
-    const stmt = db.prepare('DELETE FROM pxe_config WHERE key = ?');
-    const result = stmt.run(key);
-    return result.changes > 0;
+  async delete(key: string): Promise<boolean> {
+    const db = getPool();
+    const result = await db.query('DELETE FROM pxe_config WHERE key = $1', [key]);
+    return (result.rowCount ?? 0) > 0;
   },
 };
 
 export const IsoModel = {
-  upsert(entry: Omit<IsoEntry, 'id' | 'created_at'>): IsoEntry {
-    const db = getDatabase();
-    const initrdItems = JSON.stringify(entry.initrd_items || []);
-    const stmt = db.prepare(`
-      INSERT INTO iso_entries (iso_name, label, os_type, kernel_path, initrd_items, boot_args)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(iso_name) DO UPDATE SET
-        label = excluded.label,
-        os_type = excluded.os_type,
-        kernel_path = excluded.kernel_path,
-        initrd_items = excluded.initrd_items,
-        boot_args = excluded.boot_args
-    `);
-    stmt.run(
-      entry.iso_name,
-      entry.label,
-      entry.os_type,
-      entry.kernel_path,
-      initrdItems,
-      entry.boot_args
+  async upsert(entry: Omit<IsoEntry, 'id' | 'created_at'>): Promise<IsoEntry> {
+    const db = getPool();
+    const result = await db.query(
+      `INSERT INTO iso_entries (iso_name, label, os_type, kernel_path, initrd_items, boot_args)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (iso_name) DO UPDATE SET
+         label = EXCLUDED.label,
+         os_type = EXCLUDED.os_type,
+         kernel_path = EXCLUDED.kernel_path,
+         initrd_items = EXCLUDED.initrd_items,
+         boot_args = EXCLUDED.boot_args
+       RETURNING *`,
+      [
+        entry.iso_name,
+        entry.label,
+        entry.os_type,
+        entry.kernel_path,
+        entry.initrd_items || [],
+        entry.boot_args,
+      ]
     );
-    return this.findByIsoName(entry.iso_name)!;
+    return result.rows[0] as IsoEntry;
   },
 
-  findByIsoName(isoName: string): IsoEntry | null {
-    const db = getDatabase();
-    const row = db.prepare('SELECT * FROM iso_entries WHERE iso_name = ?').get(isoName) as any;
-    if (!row) return null;
-    let initrd_items: { path: string; name?: string }[] = [];
-    if (row.initrd_items) {
-      try {
-        initrd_items = JSON.parse(row.initrd_items);
-      } catch {
-        initrd_items = [];
-      }
-    }
-    return {
-      ...row,
-      initrd_items,
-    } as IsoEntry;
+  async findByIsoName(isoName: string): Promise<IsoEntry | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM iso_entries WHERE iso_name = $1', [isoName]);
+    if (result.rows.length === 0) return null;
+    return result.rows[0] as IsoEntry;
   },
 
-  getAll(): IsoEntry[] {
-    const db = getDatabase();
-    const rows = db.prepare('SELECT * FROM iso_entries ORDER BY created_at DESC').all() as any[];
-    return rows.map(row => {
-      let initrd_items: { path: string; name?: string }[] = [];
-      if (row.initrd_items) {
-        try {
-          initrd_items = JSON.parse(row.initrd_items);
-        } catch {
-          initrd_items = [];
-        }
-      }
-      return {
-        ...row,
-        initrd_items,
-      } as IsoEntry;
-    });
+  async getAll(): Promise<IsoEntry[]> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM iso_entries ORDER BY created_at DESC');
+    return result.rows as IsoEntry[];
   },
 
-  deleteByIsoName(isoName: string): boolean {
-    const db = getDatabase();
-    const stmt = db.prepare('DELETE FROM iso_entries WHERE iso_name = ?');
-    const result = stmt.run(isoName);
-    return result.changes > 0;
+  async deleteByIsoName(isoName: string): Promise<boolean> {
+    const db = getPool();
+    const result = await db.query('DELETE FROM iso_entries WHERE iso_name = $1', [isoName]);
+    return (result.rowCount ?? 0) > 0;
   },
 };

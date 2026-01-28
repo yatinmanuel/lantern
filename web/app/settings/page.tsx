@@ -167,7 +167,7 @@ export default function SettingsPage() {
         };
       });
       await configApi.updateConfig(updates);
-      setConfigMessage('Configuration saved.');
+      setConfigMessage('Configuration update queued.');
       await loadConfig();
     } catch (error) {
       console.error('Failed to save configuration:', error);
@@ -180,7 +180,7 @@ export default function SettingsPage() {
   async function handleRegenerateIpxe() {
     try {
       const res = await configApi.regenerateIpxeMenu();
-      setConfigMessage(res.message || (res.success ? 'iPXE menu regenerated.' : 'Failed to regenerate iPXE menu.'));
+      setConfigMessage(res.message || (res.success ? 'iPXE menu regeneration queued.' : 'Failed to regenerate iPXE menu.'));
     } catch (error) {
       console.error('Failed to regenerate iPXE menu:', error);
       setConfigMessage('Failed to regenerate iPXE menu.');
@@ -190,7 +190,7 @@ export default function SettingsPage() {
   async function handleRegenerateDnsmasq() {
     try {
       const res = await configApi.regenerateDnsmasq();
-      setConfigMessage(res.message || (res.success ? 'dnsmasq configuration regenerated.' : 'Failed to regenerate dnsmasq config.'));
+      setConfigMessage(res.message || (res.success ? 'dnsmasq regeneration queued.' : 'Failed to regenerate dnsmasq config.'));
     } catch (error) {
       console.error('Failed to regenerate dnsmasq config:', error);
       setConfigMessage('Failed to regenerate dnsmasq config.');

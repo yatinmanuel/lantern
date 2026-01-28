@@ -1,4 +1,4 @@
-import { getDatabase } from './index.js';
+import { getPool } from './index.js';
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 
@@ -38,6 +38,14 @@ export interface Session {
   created_at: string;
 }
 
+function mapUser(row: any): User {
+  return {
+    ...row,
+    is_active: row.is_active === true,
+    is_superuser: row.is_superuser === true,
+  } as User;
+}
+
 export const UserModel = {
   async create(user: {
     username: string;
@@ -47,70 +55,49 @@ export const UserModel = {
     is_active?: boolean;
     is_superuser?: boolean;
   }): Promise<User> {
-    const db = getDatabase();
+    const db = getPool();
     const passwordHash = await bcrypt.hash(user.password, 10);
-    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-    
-    const stmt = db.prepare(`
-      INSERT INTO users (username, email, password_hash, full_name, is_active, is_superuser, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    const result = stmt.run(
-      user.username,
-      user.email || null,
-      passwordHash,
-      user.full_name || null,
-      user.is_active !== false ? 1 : 0,
-      user.is_superuser ? 1 : 0,
-      now,
-      now
+    const result = await db.query(
+      `INSERT INTO users (username, email, password_hash, full_name, is_active, is_superuser)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [
+        user.username,
+        user.email || null,
+        passwordHash,
+        user.full_name || null,
+        user.is_active !== false,
+        !!user.is_superuser,
+      ]
     );
-    
-    return this.findById(result.lastInsertRowid as number)!;
+    return mapUser(result.rows[0]);
   },
 
-  findById(id: number): User | null {
-    const db = getDatabase();
-    const row = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any;
-    if (!row) return null;
-    return {
-      ...row,
-      is_active: row.is_active === 1,
-      is_superuser: row.is_superuser === 1,
-    } as User;
+  async findById(id: number): Promise<User | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+    if (result.rows.length === 0) return null;
+    return mapUser(result.rows[0]);
   },
 
-  findByUsername(username: string): User | null {
-    const db = getDatabase();
-    const row = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as any;
-    if (!row) return null;
-    return {
-      ...row,
-      is_active: row.is_active === 1,
-      is_superuser: row.is_superuser === 1,
-    } as User;
+  async findByUsername(username: string): Promise<User | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM users WHERE username = $1', [username]);
+    if (result.rows.length === 0) return null;
+    return mapUser(result.rows[0]);
   },
 
-  findByEmail(email: string): User | null {
-    const db = getDatabase();
-    const row = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
-    if (!row) return null;
-    return {
-      ...row,
-      is_active: row.is_active === 1,
-      is_superuser: row.is_superuser === 1,
-    } as User;
+  async findByEmail(email: string): Promise<User | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (result.rows.length === 0) return null;
+    return mapUser(result.rows[0]);
   },
 
-  findAll(): User[] {
-    const db = getDatabase();
-    const rows = db.prepare('SELECT * FROM users ORDER BY created_at DESC').all() as any[];
-    return rows.map(row => ({
-      ...row,
-      is_active: row.is_active === 1,
-      is_superuser: row.is_superuser === 1,
-    })) as User[];
+  async findAll(): Promise<User[]> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM users ORDER BY created_at DESC');
+    return result.rows.map(mapUser);
   },
 
   async update(id: number, updates: {
@@ -120,56 +107,57 @@ export const UserModel = {
     is_active?: boolean;
     is_superuser?: boolean;
   }): Promise<User> {
-    const db = getDatabase();
+    const db = getPool();
     const fields: string[] = [];
     const values: any[] = [];
+    let idx = 1;
 
     if (updates.email !== undefined) {
-      fields.push('email = ?');
+      fields.push(`email = $${idx++}`);
       values.push(updates.email);
     }
     if (updates.password) {
       const passwordHash = await bcrypt.hash(updates.password, 10);
-      fields.push('password_hash = ?');
+      fields.push(`password_hash = $${idx++}`);
       values.push(passwordHash);
     }
     if (updates.full_name !== undefined) {
-      fields.push('full_name = ?');
+      fields.push(`full_name = $${idx++}`);
       values.push(updates.full_name);
     }
     if (updates.is_active !== undefined) {
-      fields.push('is_active = ?');
-      values.push(updates.is_active ? 1 : 0);
+      fields.push(`is_active = $${idx++}`);
+      values.push(!!updates.is_active);
     }
     if (updates.is_superuser !== undefined) {
-      fields.push('is_superuser = ?');
-      values.push(updates.is_superuser ? 1 : 0);
+      fields.push(`is_superuser = $${idx++}`);
+      values.push(!!updates.is_superuser);
     }
 
     if (fields.length === 0) {
-      return this.findById(id)!;
+      const existing = await this.findById(id);
+      return existing!;
     }
 
-    fields.push('updated_at = ?');
-    values.push(new Date().toISOString().replace('T', ' ').slice(0, 19));
+    fields.push('updated_at = NOW()');
     values.push(id);
 
-    const stmt = db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`);
-    stmt.run(...values);
-    return this.findById(id)!;
+    const result = await db.query(
+      `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return mapUser(result.rows[0]);
   },
 
   async updateLastLogin(id: number): Promise<void> {
-    const db = getDatabase();
-    const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-    db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(now, id);
+    const db = getPool();
+    await db.query('UPDATE users SET last_login = NOW() WHERE id = $1', [id]);
   },
 
-  delete(id: number): boolean {
-    const db = getDatabase();
-    const stmt = db.prepare('DELETE FROM users WHERE id = ?');
-    const result = stmt.run(id);
-    return result.changes > 0;
+  async delete(id: number): Promise<boolean> {
+    const db = getPool();
+    const result = await db.query('DELETE FROM users WHERE id = $1', [id]);
+    return (result.rowCount ?? 0) > 0;
   },
 
   async verifyPassword(user: User, password: string): Promise<boolean> {
@@ -178,167 +166,292 @@ export const UserModel = {
 };
 
 export const RoleModel = {
-  findAll(): Role[] {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM roles ORDER BY name').all() as Role[];
+  async findAll(): Promise<Role[]> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM roles ORDER BY name');
+    return result.rows as Role[];
   },
 
-  findById(id: number): Role | null {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM roles WHERE id = ?').get(id) as Role | null;
+  async findById(id: number): Promise<Role | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM roles WHERE id = $1', [id]);
+    return (result.rows[0] as Role) || null;
   },
 
-  findByName(name: string): Role | null {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM roles WHERE name = ?').get(name) as Role | null;
+  async findByName(name: string): Promise<Role | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM roles WHERE name = $1', [name]);
+    return (result.rows[0] as Role) || null;
   },
 
-  getUserRoles(userId: number): Role[] {
-    const db = getDatabase();
-    return db.prepare(`
-      SELECT r.* FROM roles r
-      INNER JOIN user_roles ur ON r.id = ur.role_id
-      WHERE ur.user_id = ?
-    `).all(userId) as Role[];
+  async create(name: string, description?: string | null): Promise<Role> {
+    const db = getPool();
+    const result = await db.query(
+      `INSERT INTO roles (name, description)
+       VALUES ($1, $2)
+       RETURNING *`,
+      [name, description || null]
+    );
+    return result.rows[0] as Role;
   },
 
-  assignRole(userId: number, roleId: number): void {
-    const db = getDatabase();
-    db.prepare('INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)').run(userId, roleId);
+  async update(id: number, updates: { name?: string; description?: string | null }): Promise<Role | null> {
+    const db = getPool();
+    const fields: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+
+    if (updates.name !== undefined) {
+      fields.push(`name = $${idx++}`);
+      values.push(updates.name);
+    }
+    if (updates.description !== undefined) {
+      fields.push(`description = $${idx++}`);
+      values.push(updates.description);
+    }
+
+    if (fields.length === 0) {
+      return this.findById(id);
+    }
+
+    values.push(id);
+    const result = await db.query(
+      `UPDATE roles SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return (result.rows[0] as Role) || null;
   },
 
-  removeRole(userId: number, roleId: number): void {
-    const db = getDatabase();
-    db.prepare('DELETE FROM user_roles WHERE user_id = ? AND role_id = ?').run(userId, roleId);
+  async delete(id: number): Promise<boolean> {
+    const db = getPool();
+    const result = await db.query('DELETE FROM roles WHERE id = $1', [id]);
+    return (result.rowCount ?? 0) > 0;
   },
 
-  setUserRoles(userId: number, roleIds: number[]): void {
-    const db = getDatabase();
-    const remove = db.prepare('DELETE FROM user_roles WHERE user_id = ?');
-    remove.run(userId);
-    
-    const insert = db.prepare('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)');
+  async getUserRoles(userId: number): Promise<Role[]> {
+    const db = getPool();
+    const result = await db.query(
+      `SELECT r.* FROM roles r
+       INNER JOIN user_roles ur ON r.id = ur.role_id
+       WHERE ur.user_id = $1
+       ORDER BY r.name`,
+      [userId]
+    );
+    return result.rows as Role[];
+  },
+
+  async getRolePermissions(roleId: number): Promise<Permission[]> {
+    const db = getPool();
+    const result = await db.query(
+      `SELECT p.* FROM permissions p
+       INNER JOIN role_permissions rp ON rp.permission_id = p.id
+       WHERE rp.role_id = $1
+       ORDER BY p.resource, p.action`,
+      [roleId]
+    );
+    return result.rows as Permission[];
+  },
+
+  async addUserRole(userId: number, roleId: number): Promise<void> {
+    const db = getPool();
+    await db.query(
+      'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [userId, roleId]
+    );
+  },
+
+  async removeUserRole(userId: number, roleId: number): Promise<void> {
+    const db = getPool();
+    await db.query('DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2', [userId, roleId]);
+  },
+
+  async setUserRoles(userId: number, roleIds: number[]): Promise<void> {
+    const db = getPool();
+    await db.query('DELETE FROM user_roles WHERE user_id = $1', [userId]);
     for (const roleId of roleIds) {
-      insert.run(userId, roleId);
+      await db.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)', [userId, roleId]);
+    }
+  },
+
+  async setRolePermissions(roleId: number, permissionIds: number[]): Promise<void> {
+    const db = getPool();
+    await db.query('DELETE FROM role_permissions WHERE role_id = $1', [roleId]);
+    for (const permissionId of permissionIds) {
+      await db.query('INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2)', [roleId, permissionId]);
     }
   },
 };
 
 export const PermissionModel = {
-  findAll(): Permission[] {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM permissions ORDER BY resource, action').all() as Permission[];
+  async findAll(): Promise<Permission[]> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM permissions ORDER BY resource, action');
+    return result.rows as Permission[];
   },
 
-  findByResource(resource: string): Permission[] {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM permissions WHERE resource = ? ORDER BY action').all(resource) as Permission[];
+  async findByResource(resource: string): Promise<Permission[]> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM permissions WHERE resource = $1 ORDER BY action', [resource]);
+    return result.rows as Permission[];
   },
 
-  getUserPermissions(userId: number): Permission[] {
-    const db = getDatabase();
-    // Get permissions from roles and direct user permissions
-    return db.prepare(`
-      SELECT DISTINCT p.* FROM permissions p
-      WHERE p.id IN (
-        SELECT permission_id FROM role_permissions rp
-        INNER JOIN user_roles ur ON rp.role_id = ur.role_id
-        WHERE ur.user_id = ?
-        UNION
-        SELECT permission_id FROM user_permissions WHERE user_id = ?
-      )
-    `).all(userId, userId) as Permission[];
+  async findById(id: number): Promise<Permission | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM permissions WHERE id = $1', [id]);
+    return (result.rows[0] as Permission) || null;
   },
 
-  hasPermission(userId: number, permissionName: string): boolean {
-    const db = getDatabase();
-    const user = UserModel.findById(userId);
-    if (!user) return false;
-    if (user.is_superuser) return true; // Superusers have all permissions
-    
-    const result = db.prepare(`
-      SELECT COUNT(*) as count FROM permissions p
-      WHERE p.name = ? AND p.id IN (
-        SELECT permission_id FROM role_permissions rp
-        INNER JOIN user_roles ur ON rp.role_id = ur.role_id
-        WHERE ur.user_id = ?
-        UNION
-        SELECT permission_id FROM user_permissions WHERE user_id = ?
-      )
-    `).get(permissionName, userId, userId) as { count: number };
-    
-    return result.count > 0;
+  async findByName(name: string): Promise<Permission | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM permissions WHERE name = $1', [name]);
+    return (result.rows[0] as Permission) || null;
   },
 
-  assignPermission(userId: number, permissionId: number): void {
-    const db = getDatabase();
-    db.prepare('INSERT OR IGNORE INTO user_permissions (user_id, permission_id) VALUES (?, ?)').run(userId, permissionId);
+  async create(input: { name: string; resource: string; action: string; description?: string | null }): Promise<Permission> {
+    const db = getPool();
+    const result = await db.query(
+      `INSERT INTO permissions (name, resource, action, description)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [input.name, input.resource, input.action, input.description || null]
+    );
+    return result.rows[0] as Permission;
   },
 
-  removePermission(userId: number, permissionId: number): void {
-    const db = getDatabase();
-    db.prepare('DELETE FROM user_permissions WHERE user_id = ? AND permission_id = ?').run(userId, permissionId);
-  },
+  async update(id: number, updates: { name?: string; resource?: string; action?: string; description?: string | null }): Promise<Permission | null> {
+    const db = getPool();
+    const fields: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
 
-  setUserPermissions(userId: number, permissionIds: number[]): void {
-    const db = getDatabase();
-    const remove = db.prepare('DELETE FROM user_permissions WHERE user_id = ?');
-    remove.run(userId);
-    
-    const insert = db.prepare('INSERT INTO user_permissions (user_id, permission_id) VALUES (?, ?)');
-    for (const permId of permissionIds) {
-      insert.run(userId, permId);
+    if (updates.name !== undefined) {
+      fields.push(`name = $${idx++}`);
+      values.push(updates.name);
     }
+    if (updates.resource !== undefined) {
+      fields.push(`resource = $${idx++}`);
+      values.push(updates.resource);
+    }
+    if (updates.action !== undefined) {
+      fields.push(`action = $${idx++}`);
+      values.push(updates.action);
+    }
+    if (updates.description !== undefined) {
+      fields.push(`description = $${idx++}`);
+      values.push(updates.description);
+    }
+
+    if (fields.length === 0) {
+      return this.findById(id);
+    }
+
+    values.push(id);
+    const result = await db.query(
+      `UPDATE permissions SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return (result.rows[0] as Permission) || null;
   },
 
-  getRolePermissions(roleId: number): Permission[] {
-    const db = getDatabase();
-    return db.prepare(`
-      SELECT p.* FROM permissions p
-      INNER JOIN role_permissions rp ON p.id = rp.permission_id
-      WHERE rp.role_id = ?
-    `).all(roleId) as Permission[];
+  async delete(id: number): Promise<boolean> {
+    const db = getPool();
+    const result = await db.query('DELETE FROM permissions WHERE id = $1', [id]);
+    return (result.rowCount ?? 0) > 0;
+  },
+
+  async getUserPermissions(userId: number): Promise<Permission[]> {
+    const db = getPool();
+    const result = await db.query(
+      `SELECT DISTINCT p.* FROM permissions p
+       LEFT JOIN user_permissions up ON p.id = up.permission_id
+       LEFT JOIN user_roles ur ON ur.user_id = $1
+       LEFT JOIN role_permissions rp ON rp.role_id = ur.role_id
+       WHERE up.user_id = $1 OR rp.permission_id = p.id
+       ORDER BY p.resource, p.action`,
+      [userId]
+    );
+    return result.rows as Permission[];
+  },
+
+  async hasPermission(userId: number, permissionName: string): Promise<boolean> {
+    const db = getPool();
+    const result = await db.query(
+      `SELECT 1 FROM permissions p
+       LEFT JOIN user_permissions up ON p.id = up.permission_id
+       LEFT JOIN user_roles ur ON ur.user_id = $1
+       LEFT JOIN role_permissions rp ON rp.role_id = ur.role_id
+       WHERE p.name = $2 AND (up.user_id = $1 OR rp.permission_id = p.id)
+       LIMIT 1`,
+      [userId, permissionName]
+    );
+    return result.rows.length > 0;
+  },
+
+  async addUserPermission(userId: number, permissionId: number): Promise<void> {
+    const db = getPool();
+    await db.query(
+      'INSERT INTO user_permissions (user_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [userId, permissionId]
+    );
+  },
+
+  async removeUserPermission(userId: number, permissionId: number): Promise<void> {
+    const db = getPool();
+    await db.query('DELETE FROM user_permissions WHERE user_id = $1 AND permission_id = $2', [userId, permissionId]);
+  },
+
+  async setUserPermissions(userId: number, permissionIds: number[]): Promise<void> {
+    const db = getPool();
+    await db.query('DELETE FROM user_permissions WHERE user_id = $1', [userId]);
+    for (const permissionId of permissionIds) {
+      await db.query('INSERT INTO user_permissions (user_id, permission_id) VALUES ($1, $2)', [userId, permissionId]);
+    }
   },
 };
 
 export const SessionModel = {
-  create(userId: number, expiresInHours: number = 24): Session {
-    const db = getDatabase();
+  async create(userId: number, ttlSeconds: number = 86400): Promise<Session> {
+    const db = getPool();
     const sessionId = randomBytes(32).toString('hex');
-    const expiresAt = new Date();
-    expiresAt.setHours(expiresAt.getHours() + expiresInHours);
-    const expiresAtStr = expiresAt.toISOString().replace('T', ' ').slice(0, 19);
-    
-    db.prepare(`
-      INSERT INTO sessions (id, user_id, expires_at)
-      VALUES (?, ?, ?)
-    `).run(sessionId, userId, expiresAtStr);
-    
-    return this.findById(sessionId)!;
+    const result = await db.query(
+      `INSERT INTO sessions (id, user_id, expires_at)
+       VALUES ($1, $2, NOW() + ($3 || ' seconds')::interval)
+       RETURNING *`,
+      [sessionId, userId, ttlSeconds]
+    );
+    return result.rows[0] as Session;
   },
 
-  findById(id: string): Session | null {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM sessions WHERE id = ? AND expires_at > datetime(\'now\')').get(id) as Session | null;
+  async findById(id: string): Promise<Session | null> {
+    const db = getPool();
+    const result = await db.query(
+      'SELECT * FROM sessions WHERE id = $1 AND expires_at > NOW()',
+      [id]
+    );
+    return (result.rows[0] as Session) || null;
   },
 
-  findByUserId(userId: number): Session[] {
-    const db = getDatabase();
-    return db.prepare('SELECT * FROM sessions WHERE user_id = ? AND expires_at > datetime(\'now\') ORDER BY created_at DESC').all(userId) as Session[];
+  async findByUser(userId: number): Promise<Session[]> {
+    const db = getPool();
+    const result = await db.query(
+      'SELECT * FROM sessions WHERE user_id = $1 AND expires_at > NOW() ORDER BY created_at DESC',
+      [userId]
+    );
+    return result.rows as Session[];
   },
 
-  delete(id: string): void {
-    const db = getDatabase();
-    db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+  async delete(id: string): Promise<void> {
+    const db = getPool();
+    await db.query('DELETE FROM sessions WHERE id = $1', [id]);
   },
 
-  deleteByUserId(userId: number): void {
-    const db = getDatabase();
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+  async deleteByUser(userId: number): Promise<void> {
+    const db = getPool();
+    await db.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
   },
 
-  cleanupExpired(): void {
-    const db = getDatabase();
-    db.prepare('DELETE FROM sessions WHERE expires_at <= datetime(\'now\')').run();
+  async cleanupExpired(): Promise<void> {
+    const db = getPool();
+    await db.query('DELETE FROM sessions WHERE expires_at <= NOW()');
   },
 };

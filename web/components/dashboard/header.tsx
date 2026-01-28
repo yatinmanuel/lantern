@@ -19,6 +19,7 @@ const navigation = [
   { name: 'Overview', href: '/' },
   { name: 'Clients', href: '/servers' },
   { name: 'Images', href: '/images' },
+  { name: 'Queue', href: '/queue' },
   { name: 'Settings', href: '/settings' },
 ];
 

@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { ServerModel, TaskModel, InstallationModel } from '../../database/models.js';
 import { logger } from '../../utils/logger.js';
-import { executeInstallation } from '../../tasks/installer.js';
 import { sseManager } from '../../utils/sse-manager.js';
-import { natsManager } from '../../utils/nats-manager.js';
 import { parseParamInt } from '../../utils/params.js';
+import { enqueueJob, recordJob } from '../../jobs/service.js';
+import { buildJobMeta } from '../../jobs/request-context.js';
 
 export const serverRoutes = Router();
 
@@ -18,21 +18,21 @@ serverRoutes.post('/register', async (req, res) => {
     }
 
     // Check if server already exists
-    let server = ServerModel.findByMac(mac_address);
+    let server = await ServerModel.findByMac(mac_address);
     
     if (server) {
       // Update existing server
-      server = ServerModel.update(server.id, {
+      server = await ServerModel.update(server.id, {
         ip_address: ip_address || server.ip_address,
         hardware_info: hardware_info || server.hardware_info,
         status: 'ready',
       });
       // Update last_seen timestamp
-      ServerModel.updateLastSeen(server.id);
+      await ServerModel.updateLastSeen(server.id);
       logger.info(`Server updated: ${mac_address}`, { ip: ip_address });
     } else {
       // Create new server
-      server = ServerModel.create({
+      server = await ServerModel.create({
         mac_address,
         ip_address: ip_address || null,
         hostname: null,
@@ -40,9 +40,22 @@ serverRoutes.post('/register', async (req, res) => {
         hardware_info: hardware_info || null,
       });
       // Update last_seen timestamp
-      ServerModel.updateLastSeen(server.id);
+      await ServerModel.updateLastSeen(server.id);
       logger.info(`Server registered: ${mac_address}`, { ip: ip_address });
     }
+
+    const { source, created_by, meta } = buildJobMeta(req);
+    await recordJob({
+      type: 'clients.register',
+      category: 'clients',
+      status: 'completed',
+      message: `Client registered ${mac_address}`,
+      source,
+      created_by,
+      payload: { mac_address, ip_address, hardware_info, meta },
+      target_type: 'client',
+      target_id: String(server.id),
+    });
 
     return res.json(server);
   } catch (error) {
@@ -52,9 +65,9 @@ serverRoutes.post('/register', async (req, res) => {
 });
 
 // Get all servers
-serverRoutes.get('/', (_req, res) => {
+serverRoutes.get('/', async (_req, res) => {
   try {
-    const servers = ServerModel.findAll();
+    const servers = await ServerModel.findAll();
     return res.json(servers);
   } catch (error) {
     logger.error('Error fetching servers:', error);
@@ -67,7 +80,7 @@ serverRoutes.get('/', (_req, res) => {
 serverRoutes.get('/stale', async (req, res) => {
   try {
     const timeoutSeconds = parseInt(req.query.timeout as string || '30', 10);
-    const staleServers = ServerModel.findStaleServers(timeoutSeconds);
+    const staleServers = await ServerModel.findStaleServers(timeoutSeconds);
     return res.json({
       count: staleServers.length,
       servers: staleServers,
@@ -89,13 +102,13 @@ serverRoutes.get('/stale', async (req, res) => {
 serverRoutes.post('/cleanup', async (req, res) => {
   try {
     const timeoutSeconds = parseInt(req.body.timeout || process.env.CLEANUP_TIMEOUT_SECONDS || '30', 10);
-    const staleServers = ServerModel.findStaleServers(timeoutSeconds);
+    const staleServers = await ServerModel.findStaleServers(timeoutSeconds);
     
     const deleted: string[] = [];
     const failed: string[] = [];
 
     for (const server of staleServers) {
-      const result = ServerModel.delete(server.id);
+      const result = await ServerModel.delete(server.id);
       if (result) {
         deleted.push(server.mac_address);
         logger.info(`Manually removed stale server: ${server.mac_address} (last seen: ${server.last_seen})`);
@@ -103,6 +116,19 @@ serverRoutes.post('/cleanup', async (req, res) => {
         failed.push(server.mac_address);
       }
     }
+
+    const { source, created_by, meta } = buildJobMeta(req);
+    await recordJob({
+      type: 'clients.cleanup',
+      category: 'clients',
+      status: 'completed',
+      message: 'Cleanup stale clients',
+      source,
+      created_by,
+      payload: { deleted, failed, timeoutSeconds, meta },
+      target_type: 'client',
+      target_id: 'cleanup',
+    });
 
     return res.json({
       success: true,
@@ -119,9 +145,9 @@ serverRoutes.post('/cleanup', async (req, res) => {
 });
 
 // Get server by MAC address
-serverRoutes.get('/:mac', (req, res) => {
+serverRoutes.get('/:mac', async (req, res) => {
   try {
-    const server = ServerModel.findByMac(req.params.mac);
+    const server = await ServerModel.findByMac(req.params.mac);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -133,10 +159,10 @@ serverRoutes.get('/:mac', (req, res) => {
 });
 
 // Get server by ID
-serverRoutes.get('/id/:id', (req, res) => {
+serverRoutes.get('/id/:id', async (req, res) => {
   try {
     const id = parseParamInt(req.params.id);
-    const server = ServerModel.findById(id);
+    const server = await ServerModel.findById(id);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -148,9 +174,9 @@ serverRoutes.get('/id/:id', (req, res) => {
 });
 
 // Update server status
-serverRoutes.patch('/:mac/status', (req, res) => {
+serverRoutes.patch('/:mac/status', async (req, res) => {
   try {
-    const server = ServerModel.findByMac(req.params.mac);
+    const server = await ServerModel.findByMac(req.params.mac);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -160,7 +186,21 @@ serverRoutes.patch('/:mac/status', (req, res) => {
       return res.status(400).json({ error: 'Invalid status' });
     }
 
-    const updated = ServerModel.update(server.id, { status });
+    const updated = await ServerModel.update(server.id, { status });
+
+    const { source, created_by, meta } = buildJobMeta(req);
+    await recordJob({
+      type: 'clients.update-status',
+      category: 'clients',
+      status: 'completed',
+      message: `Update client status ${server.mac_address} -> ${status}`,
+      source,
+      created_by,
+      payload: { status, meta },
+      target_type: 'client',
+      target_id: String(server.id),
+    });
+
     return res.json(updated);
   } catch (error) {
     logger.error('Error updating server status:', error);
@@ -169,9 +209,9 @@ serverRoutes.patch('/:mac/status', (req, res) => {
 });
 
 // Update server (general update endpoint)
-serverRoutes.patch('/:mac', (req, res) => {
+serverRoutes.patch('/:mac', async (req, res) => {
   try {
-    const server = ServerModel.findByMac(req.params.mac);
+    const server = await ServerModel.findByMac(req.params.mac);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -188,7 +228,21 @@ serverRoutes.patch('/:mac', (req, res) => {
       updates.status = status;
     }
 
-    const updated = ServerModel.update(server.id, updates);
+    const updated = await ServerModel.update(server.id, updates);
+
+    const { source, created_by, meta } = buildJobMeta(req);
+    await recordJob({
+      type: 'clients.update',
+      category: 'clients',
+      status: 'completed',
+      message: `Update client ${server.mac_address}`,
+      source,
+      created_by,
+      payload: { updates, meta },
+      target_type: 'client',
+      target_id: String(server.id),
+    });
+
     return res.json(updated);
   } catch (error) {
     logger.error('Error updating server:', error);
@@ -197,10 +251,10 @@ serverRoutes.patch('/:mac', (req, res) => {
 });
 
 // Update server by ID
-serverRoutes.patch('/id/:id', (req, res) => {
+serverRoutes.patch('/id/:id', async (req, res) => {
   try {
     const id = parseParamInt(req.params.id);
-    const server = ServerModel.findById(id);
+    const server = await ServerModel.findById(id);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -217,8 +271,23 @@ serverRoutes.patch('/id/:id', (req, res) => {
       updates.status = status;
     }
 
-    const updated = ServerModel.update(id, updates);
-    return res.json(updated);
+    if (Object.keys(updates).length === 0) {
+      return res.json(server);
+    }
+
+    const { source, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'clients.update',
+      category: 'clients',
+      message: `Update client ${server.mac_address}`,
+      source,
+      created_by,
+      payload: { id, updates, meta },
+      target_type: 'client',
+      target_id: String(server.id),
+    });
+
+    return res.status(202).json({ success: true, jobId: job.id, job });
   } catch (error) {
     logger.error('Error updating server:', error);
     return res.status(500).json({ error: 'Failed to update server' });
@@ -226,20 +295,20 @@ serverRoutes.patch('/id/:id', (req, res) => {
 });
 
 // SSE endpoint for real-time task delivery (persistent connection)
-serverRoutes.get('/:mac/tasks/stream', (req, res) => {
+serverRoutes.get('/:mac/tasks/stream', async (req, res) => {
   try {
     const macAddress = req.params.mac;
-    const server = ServerModel.findByMac(macAddress);
+    const server = await ServerModel.findByMac(macAddress);
     if (!server) {
       res.status(404).json({ error: 'Server not found' });
       return;
     }
 
     // Update last_seen timestamp (heartbeat)
-    ServerModel.updateLastSeen(server.id);
+    await ServerModel.updateLastSeen(server.id);
 
     // Check for any pending tasks immediately and send them
-    const pendingTasks = TaskModel.findByServer(server.id, 'pending');
+    const pendingTasks = await TaskModel.findByServer(server.id, 'pending');
     if (pendingTasks.length > 0) {
       // Send existing tasks before establishing SSE connection
       // This ensures tasks aren't missed
@@ -261,13 +330,13 @@ serverRoutes.get('/:mac/tasks/stream', (req, res) => {
 // Long polling endpoint for tasks (fallback - stays open until task arrives or timeout)
 serverRoutes.get('/:mac/tasks', async (req, res) => {
   try {
-    const server = ServerModel.findByMac(req.params.mac);
+    const server = await ServerModel.findByMac(req.params.mac);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
 
     // Update last_seen timestamp (heartbeat)
-    ServerModel.updateLastSeen(server.id);
+    await ServerModel.updateLastSeen(server.id);
 
     const timeout = parseInt(req.query.timeout as string || '30', 10) * 1000; // Default 30 seconds
     
@@ -276,7 +345,7 @@ serverRoutes.get('/:mac/tasks', async (req, res) => {
     const maxChecks = Math.floor(timeout / checkInterval);
     
     for (let i = 0; i < maxChecks; i++) {
-    const tasks = TaskModel.findByServer(server.id, 'pending');
+    const tasks = await TaskModel.findByServer(server.id, 'pending');
       
       if (tasks.length > 0) {
         // Found tasks, return immediately
@@ -304,12 +373,12 @@ serverRoutes.get('/:mac/tasks', async (req, res) => {
 // Get all tasks for a server
 serverRoutes.get('/:mac/tasks/all', async (req, res) => {
   try {
-    const server = ServerModel.findByMac(req.params.mac);
+    const server = await ServerModel.findByMac(req.params.mac);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    const tasks = TaskModel.findByServer(server.id);
+    const tasks = await TaskModel.findByServer(server.id);
     return res.json(tasks);
   } catch (error) {
     logger.error('Error fetching tasks:', error);
@@ -320,12 +389,12 @@ serverRoutes.get('/:mac/tasks/all', async (req, res) => {
 // Get installations for a server
 serverRoutes.get('/:mac/installations', async (req, res) => {
   try {
-    const server = ServerModel.findByMac(req.params.mac);
+    const server = await ServerModel.findByMac(req.params.mac);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    const installations = InstallationModel.findByServer(server.id);
+    const installations = await InstallationModel.findByServer(server.id);
     return res.json(installations);
   } catch (error) {
     logger.error('Error fetching installations:', error);
@@ -334,23 +403,26 @@ serverRoutes.get('/:mac/installations', async (req, res) => {
 });
 
 // Delete a server
-serverRoutes.delete('/:mac', (req, res) => {
+serverRoutes.delete('/:mac', async (req, res) => {
   try {
-    const server = ServerModel.findByMac(req.params.mac);
+    const server = await ServerModel.findByMac(req.params.mac);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    // Disconnect SSE connection if active
-    sseManager.disconnect(req.params.mac);
+    const { source, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'clients.delete',
+      category: 'clients',
+      message: `Delete client ${server.mac_address}`,
+      source,
+      created_by,
+      payload: { id: server.id, meta },
+      target_type: 'client',
+      target_id: String(server.id),
+    });
 
-    const deleted = ServerModel.delete(server.id);
-    if (deleted) {
-      logger.info(`Server deleted: ${req.params.mac}`);
-      return res.json({ success: true, message: 'Server deleted' });
-    } else {
-      return res.status(500).json({ error: 'Failed to delete server' });
-    }
+    return res.status(202).json({ success: true, jobId: job.id, job });
   } catch (error) {
     logger.error('Error deleting server:', error);
     return res.status(500).json({ 
@@ -361,24 +433,27 @@ serverRoutes.delete('/:mac', (req, res) => {
 });
 
 // Delete server by ID
-serverRoutes.delete('/id/:id', (req, res) => {
+serverRoutes.delete('/id/:id', async (req, res) => {
   try {
     const id = parseParamInt(req.params.id);
-    const server = ServerModel.findById(id);
+    const server = await ServerModel.findById(id);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    // Disconnect SSE connection if active
-    sseManager.disconnect(server.mac_address);
+    const { source, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'clients.delete',
+      category: 'clients',
+      message: `Delete client ${server.mac_address}`,
+      source,
+      created_by,
+      payload: { id: server.id, meta },
+      target_type: 'client',
+      target_id: String(server.id),
+    });
 
-    const deleted = ServerModel.delete(id);
-    if (deleted) {
-      logger.info(`Server deleted: ID ${id} (${server.mac_address})`);
-      return res.json({ success: true, message: 'Server deleted' });
-    } else {
-      return res.status(500).json({ error: 'Failed to delete server' });
-    }
+    return res.status(202).json({ success: true, jobId: job.id, job });
   } catch (error) {
     logger.error('Error deleting server:', error);
     return res.status(500).json({ 
@@ -391,23 +466,36 @@ serverRoutes.delete('/id/:id', (req, res) => {
 // Report task completion (called by Alpine agent)
 serverRoutes.post('/:mac/tasks/:taskId/complete', async (req, res) => {
   try {
-    const server = ServerModel.findByMac(req.params.mac);
+    const server = await ServerModel.findByMac(req.params.mac);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
 
     // Update last_seen timestamp (heartbeat)
-    ServerModel.updateLastSeen(server.id);
+    await ServerModel.updateLastSeen(server.id);
 
-    const task = TaskModel.findById(parseParamInt(req.params.taskId));
+    const task = await TaskModel.findById(parseParamInt(req.params.taskId));
     if (!task || task.server_id !== server.id) {
       return res.status(404).json({ error: 'Task not found' });
     }
 
     const { success, result } = req.body;
-    TaskModel.update(task.id, {
+    await TaskModel.update(task.id, {
       status: success ? 'completed' : 'failed',
       result: result || null,
+    });
+
+    const { source, created_by, meta } = buildJobMeta(req);
+    await recordJob({
+      type: 'tasks.complete',
+      category: 'tasks',
+      status: success ? 'completed' : 'failed',
+      message: `Task ${task.id} ${success ? 'completed' : 'failed'}`,
+      source,
+      created_by,
+      payload: { taskId: task.id, serverId: server.id, success, meta },
+      target_type: 'task',
+      target_id: String(task.id),
     });
 
     return res.json({ success: true });
@@ -421,42 +509,28 @@ serverRoutes.post('/:mac/tasks/:taskId/complete', async (req, res) => {
 serverRoutes.post('/id/:id/reboot', async (req, res) => {
   try {
     const id = parseParamInt(req.params.id);
-    const server = ServerModel.findById(id);
+    const server = await ServerModel.findById(id);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    // Create a reboot task for the agent to execute
-    const task = TaskModel.create({
-      server_id: server.id,
-      type: 'reboot',
-      command: JSON.stringify({ action: 'reboot' }),
-      status: 'pending',
-      result: null,
+    const { source, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'clients.reboot',
+      category: 'clients',
+      message: `Reboot client ${server.mac_address}`,
+      source,
+      created_by,
+      payload: { id: server.id, meta },
+      target_type: 'client',
+      target_id: String(server.id),
     });
 
-    logger.info(`Reboot task created for server ${server.mac_address} (task ID: ${task.id})`);
-
-    // Send task via BOTH NATS and SSE (agent might be using either)
-    let natsSuccess = false;
-    let sseSuccess = false;
-    
-    if (natsManager.isConnected()) {
-      natsSuccess = await natsManager.publishTask(server.mac_address, task);
-    }
-    
-    sseSuccess = sseManager.sendTask(server.mac_address, task);
-    
-    const pushed = natsSuccess || sseSuccess;
-    
-    if (natsSuccess) logger.info(`Task ${task.id} sent via NATS`);
-    if (sseSuccess) logger.info(`Task ${task.id} sent via SSE`);
-    if (!pushed) logger.warn(`Task ${task.id} not pushed (no active connections)`);
-
-    return res.json({ 
+    return res.status(202).json({ 
       success: true, 
-      message: pushed ? 'Task sent to agent' : 'Task created',
-      taskId: task.id
+      jobId: job.id,
+      job,
+      message: 'Reboot queued'
     });
   } catch (error) {
     logger.error('Error creating reboot task:', error);
@@ -471,44 +545,28 @@ serverRoutes.post('/id/:id/reboot', async (req, res) => {
 serverRoutes.post('/id/:id/shutdown', async (req, res) => {
   try {
     const id = parseParamInt(req.params.id);
-    const server = ServerModel.findById(id);
+    const server = await ServerModel.findById(id);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    // Create a shutdown task for the agent to execute
-    const task = TaskModel.create({
-      server_id: server.id,
-      type: 'shutdown',
-      command: JSON.stringify({ action: 'shutdown' }),
-      status: 'pending',
-      result: null,
+    const { source, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'clients.shutdown',
+      category: 'clients',
+      message: `Shutdown client ${server.mac_address}`,
+      source,
+      created_by,
+      payload: { id: server.id, meta },
+      target_type: 'client',
+      target_id: String(server.id),
     });
 
-    logger.info(`Shutdown task created for server ${server.mac_address} (task ID: ${task.id})`);
-
-    // Send task via BOTH NATS and SSE
-    let natsSuccess = false;
-    let sseSuccess = false;
-    
-    if (natsManager.isConnected()) {
-      natsSuccess = await natsManager.publishTask(server.mac_address, task);
-    }
-    
-    sseSuccess = sseManager.sendTask(server.mac_address, task);
-    
-    const pushed = natsSuccess || sseSuccess;
-    
-    if (natsSuccess) logger.info(`Task ${task.id} sent via NATS`);
-    if (sseSuccess) logger.info(`Task ${task.id} sent via SSE`);
-    if (!pushed) logger.warn(`Task ${task.id} not pushed (no active connections)`);
-
-    return res.json({ 
+    return res.status(202).json({ 
       success: true, 
-      message: pushed 
-        ? 'Shutdown task sent immediately via NATS/SSE.' 
-        : 'Shutdown task created. The agent will execute it on the next poll.',
-      taskId: task.id
+      jobId: job.id,
+      job,
+      message: 'Shutdown queued'
     });
   } catch (error) {
     logger.error('Error creating shutdown task:', error);
@@ -523,7 +581,7 @@ serverRoutes.post('/id/:id/shutdown', async (req, res) => {
 serverRoutes.post('/id/:id/install', async (req, res) => {
   try {
     const id = parseParamInt(req.params.id);
-    const server = ServerModel.findById(id);
+    const server = await ServerModel.findById(id);
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -538,35 +596,25 @@ serverRoutes.post('/id/:id/install', async (req, res) => {
       return res.status(400).json({ error: 'Server has no IP address' });
     }
 
-    // Create installation task
-    const task = TaskModel.create({
-      server_id: server.id,
-      type: 'install',
-      command: JSON.stringify({ os, version, config, disk }),
-      status: 'pending',
-      result: null,
+    const { source, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'clients.install',
+      category: 'clients',
+      message: `Install ${os} on ${server.mac_address}`,
+      source,
+      created_by,
+      payload: { id: server.id, os, version, config, disk, meta },
+      target_type: 'client',
+      target_id: String(server.id),
     });
 
-    // Update server status
-    ServerModel.update(server.id, { status: 'installing' });
+    logger.info(`Installation queued for server ${server.mac_address}: ${os}`);
 
-    // Execute installation asynchronously
-    executeInstallation(server.id, {
-      os,
-      version: version || 'latest',
-      config: config || null,
-      disk: disk || '/dev/sda',
-    }).catch((error) => {
-      logger.error(`Installation failed for server ${server.mac_address}:`, error);
-      ServerModel.update(server.id, { status: 'error' });
-    });
-
-    logger.info(`Installation started for server ${server.mac_address}: ${os}`);
-
-    return res.json({ 
+    return res.status(202).json({ 
       success: true, 
-      message: `Installation started for ${os}`,
-      taskId: task.id
+      message: `Installation queued for ${os}`,
+      jobId: job.id,
+      job,
     });
   } catch (error) {
     logger.error('Error starting installation:', error);

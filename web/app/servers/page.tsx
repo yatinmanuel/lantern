@@ -119,6 +119,7 @@ export default function ServersPage() {
 
     try {
       await api.deleteServerById(server.id);
+      alert('Delete queued');
       loadServers();
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Failed to delete client');
@@ -168,7 +169,7 @@ export default function ServersPage() {
       if (Object.keys(updates).length > 0) {
         await api.updateServer(selectedServer.id, updates);
         loadServers();
-        // Update selected server in state
+        // Optimistic update while job runs
         setSelectedServer({ ...selectedServer, ...updates });
       }
     } catch (error) {
@@ -366,7 +367,7 @@ export default function ServersPage() {
     setActionLoading('reboot');
     try {
       await api.rebootServer(selectedServer.id);
-      alert('Reboot command sent successfully');
+      alert('Reboot queued');
       loadServers();
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Failed to reboot client');
@@ -385,7 +386,7 @@ export default function ServersPage() {
     setActionLoading('shutdown');
     try {
       await api.shutdownServer(selectedServer.id);
-      alert('Shutdown command sent successfully');
+      alert('Shutdown queued');
       loadServers();
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Failed to shutdown client');
@@ -410,7 +411,7 @@ export default function ServersPage() {
         disk: installData.disk || undefined,
         config: installData.config || undefined,
       });
-      alert(`Installation started for ${installData.os}`);
+      alert(`Installation queued for ${installData.os}`);
       setInstallDialogOpen(false);
       setInstallData({ os: '', version: 'latest', disk: '/dev/sda', config: '' });
       loadServers();
