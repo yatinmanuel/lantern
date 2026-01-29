@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   DndContext, 
   closestCenter, 
@@ -18,36 +18,36 @@ import {
   verticalListSortingStrategy 
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { BootMenu, menusApi, BootMenuContentItem } from '@/lib/menus-api';
+import { BootMenu, BootMenuContentItem } from '@/lib/menus-api';
 import { isoApi, IsoFile } from '@/lib/iso-api';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea'; // Assuming simple textarea for description
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch'; // Needs installation? Assuming Shadcn Switch
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { MenuItemRow } from './menu-item-row';
-import { Save, Loader2, Plus, GripVertical, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { Plus } from 'lucide-react';
 
 interface MenuEditorProps {
   menu: BootMenu;
-  onDelete: () => void;
-  onUpdate: () => void;
+  onItemsChange?: (items: BootMenuContentItem[]) => void;
 }
 
-export function MenuEditor({ menu, onDelete, onUpdate }: MenuEditorProps) {
-  const [name, setName] = useState(menu.name);
-  const [description, setDescription] = useState(menu.description || '');
-  const [isDefault, setIsDefault] = useState(menu.is_default);
+export function MenuEditor({ menu, onItemsChange }: MenuEditorProps) {
   // We add a unique ID to each item for dnd-kit stability, in real app we might use UUIDs
   // For now we will map index to a stable ID if easier, but dnd-kit prefers stable IDs.
   // We can generate temporary IDs for the session.
   const [items, setItems] = useState<(BootMenuContentItem & { _id: string })[]>([]);
-  const [isSaving, setIsSaving] = useState(false);
   const [isos, setIsos] = useState<IsoFile[]>([]);
+  const addButtonRef = useRef<HTMLButtonElement | null>(null);
   
   // const { toast } = useToast();
 
@@ -60,14 +60,17 @@ export function MenuEditor({ menu, onDelete, onUpdate }: MenuEditorProps) {
 
   useEffect(() => {
     // Reset state when menu changes
-    setName(menu.name);
-    setDescription(menu.description || '');
-    setIsDefault(menu.is_default);
     setItems(menu.content.map((item, idx) => ({ ...item, _id: `${idx}-${Date.now()}-${Math.random()}` })));
     
     // Load ISOs
     isoApi.list().then(setIsos).catch(console.error);
   }, [menu]);
+
+  useEffect(() => {
+    if (!onItemsChange) return;
+    const cleanItems = items.map(({ _id, ...rest }) => rest);
+    onItemsChange(cleanItems);
+  }, [items, onItemsChange]);
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -78,27 +81,6 @@ export function MenuEditor({ menu, onDelete, onUpdate }: MenuEditorProps) {
         const newIndex = items.findIndex((item) => item._id === over.id);
         return arrayMove(items, oldIndex, newIndex);
       });
-    }
-  }
-
-  async function handleSave() {
-    setIsSaving(true);
-    try {
-      // Strip _id before saving
-      const cleanContent = items.map(({ _id, ...rest }) => rest);
-      await menusApi.update(menu.id, {
-        name,
-        description,
-        is_default: isDefault,
-        content: cleanContent
-      });
-      toast.success('Menu saved');
-      onUpdate();
-    } catch (error) {
-      console.error(error);
-      toast.error('Failed to save menu');
-    } finally {
-      setIsSaving(false);
     }
   }
 
@@ -124,83 +106,69 @@ export function MenuEditor({ menu, onDelete, onUpdate }: MenuEditorProps) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header / Actions */}
-      <div className="p-6 border-b flex justify-between items-start">
-         <div className="space-y-4 w-1/2">
-            <div className="space-y-1">
-               <Label>Menu Name</Label>
-               <Input value={name} onChange={(e) => setName(e.target.value)} className="font-semibold text-lg" />
-            </div>
-            <div className="space-y-1">
-               <Label>Description</Label>
-               <Input value={description} onChange={(e) => setDescription(e.target.value)} className="text-sm" />
-            </div>
-            <div className="flex items-center gap-2 pt-2">
-               <Switch checked={isDefault} onCheckedChange={setIsDefault} id="is-default" />
-               <Label htmlFor="is-default" className="cursor-pointer">Set as Global Default</Label>
-            </div>
-         </div>
-         <div className="flex items-center gap-2">
-            <Button onClick={onDelete} size="sm" variant="outline" className="border-destructive/50 text-destructive hover:bg-destructive/10">
-               <Trash2 className="mr-2 h-4 w-4" /> Delete Menu
-            </Button>
-            <Button onClick={handleSave} disabled={isSaving}>
-               {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-               Save Changes
-            </Button>
-         </div>
-      </div>
-
-
       {/* Editor Area */}
-      <div className="flex-1 overflow-hidden flex flex-col p-6 bg-transparent">
-         <div className="flex items-center justify-between mb-4">
+      <div className="flex-1 min-h-0 flex flex-col p-6 bg-transparent">
+         <div className="flex items-center justify-between mb-4 shrink-0">
             <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wider">Menu Items</h3>
-            
-            <Dialog>
-               <DialogTrigger asChild>
-                  <Button size="sm" variant="secondary"><Plus className="mr-2 h-4 w-4" /> Add Item</Button>
-               </DialogTrigger>
-               <DialogContent>
-                  <DialogHeader>
-                     <DialogTitle>Add Menu Item</DialogTitle>
-                  </DialogHeader>
-                  <div className="grid grid-cols-2 gap-4 pt-4">
-                     <Button variant="outline" className="h-24 flex flex-col gap-2" onClick={() => addItem('header')}>
-                        <span className="font-bold">Header</span>
-                        <span className="text-xs text-muted-foreground font-normal">Section Title</span>
-                     </Button>
-                     <Button variant="outline" className="h-24 flex flex-col gap-2" onClick={() => addItem('text')}>
-                        <span className="font-bold">Text</span>
-                        <span className="text-xs text-muted-foreground font-normal">Static Label</span>
-                     </Button>
-                     <Button variant="outline" className="h-24 flex flex-col gap-2" onClick={() => addItem('separator')}>
-                        <span className="font-bold">Separator</span>
-                        <span className="text-xs text-muted-foreground font-normal">Divider Line</span>
-                     </Button>
-                     {/* ISO Selection */}
-                     <Select onValueChange={(val: string) => {
-                           const iso = isos.find(i => i.id.toString() === val);
-                           if (iso) addItem('iso', { isoId: Number(iso.id), isoName: iso.name, label: iso.entry?.label || iso.name });
-                        }}>
-                        <SelectTrigger className="h-24 flex flex-col items-center justify-center gap-2 border-2 border-dashed">
-                           <span className="font-bold">ISO Image</span>
-                           <span className="text-xs text-muted-foreground font-normal">Select an uploaded image</span>
-                        </SelectTrigger>
-                        <SelectContent>
-                           {isos.map(iso => (
-                              <SelectItem key={iso.id} value={iso.id.toString()}>
-                                 {iso.entry?.label || iso.name}
-                              </SelectItem>
-                           ))}
-                        </SelectContent>
-                     </Select>
-                  </div>
-               </DialogContent>
-            </Dialog>
+
+            <ContextMenu>
+               <ContextMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      const button = addButtonRef.current;
+                      if (!button) return;
+                      const rect = button.getBoundingClientRect();
+                      const contextEvent = new MouseEvent('contextmenu', {
+                        bubbles: true,
+                        clientX: rect.left + rect.width / 2,
+                        clientY: rect.bottom + 4,
+                      });
+                      button.dispatchEvent(contextEvent);
+                    }}
+                    className="inline-flex items-center"
+                    ref={addButtonRef}
+                  >
+                    <Plus className="mr-2 h-4 w-4" /> Add Item
+                  </Button>
+               </ContextMenuTrigger>
+               <ContextMenuContent align="end" className="w-56">
+                  <ContextMenuLabel>Add Menu Item</ContextMenuLabel>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem onSelect={() => addItem('header')}>Header</ContextMenuItem>
+                  <ContextMenuItem onSelect={() => addItem('text')}>Text</ContextMenuItem>
+                  <ContextMenuItem onSelect={() => addItem('separator')}>Separator</ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuSub>
+                     <ContextMenuSubTrigger>ISO Image</ContextMenuSubTrigger>
+                     <ContextMenuSubContent className="max-h-64 overflow-y-auto">
+                        {isos.length === 0 ? (
+                          <ContextMenuItem disabled>No ISOs available</ContextMenuItem>
+                        ) : (
+                          isos.map((iso) => (
+                            <ContextMenuItem
+                              key={iso.id}
+                              onSelect={() =>
+                                addItem('iso', {
+                                  isoId: Number(iso.id),
+                                  isoName: iso.name,
+                                  label: iso.entry?.label || iso.name,
+                                })
+                              }
+                            >
+                              {iso.entry?.label || iso.name}
+                            </ContextMenuItem>
+                          ))
+                        )}
+                     </ContextMenuSubContent>
+                  </ContextMenuSub>
+               </ContextMenuContent>
+            </ContextMenu>
          </div>
 
-         <ScrollArea className="flex-1 pr-4">
+         <ScrollArea className="flex-1 min-h-0 pr-4">
             <DndContext 
                sensors={sensors} 
                collisionDetection={closestCenter} 
@@ -211,7 +179,7 @@ export function MenuEditor({ menu, onDelete, onUpdate }: MenuEditorProps) {
                   items={items.map(i => i._id)} 
                   strategy={verticalListSortingStrategy}
                >
-                  <div className="space-y-2 pb-10">
+                  <div className="space-y-2 pb-6">
                      {items.map((item) => (
                         <MenuItemRow 
                            key={item._id} 
