@@ -1009,7 +1009,6 @@ export function IsoManager() {
                    </div>
                 </Tabs>
               </div>
-            </div>
 
             <div className="flex items-center justify-between border-t bg-background/95 p-6 backdrop-blur">
                <div className="text-xs text-muted-foreground">
