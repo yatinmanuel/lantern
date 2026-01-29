@@ -2,7 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import { Job } from '../database/job-models.js';
-import { IsoModel, ServerModel, TaskModel, PXEConfigModel } from '../database/models.js';
+import { IsoModel, ServerModel, TaskModel, PXEConfigModel, BootMenuModel } from '../database/models.js';
 import { UserModel, RoleModel, PermissionModel } from '../database/user-models.js';
 import { logger } from '../utils/logger.js';
 import { generateIpxeMenu } from '../utils/ipxe.js';
@@ -715,8 +715,64 @@ export async function runJobHandler(job: Job): Promise<Record<string, any>> {
       return handlePermissionUpdate(job);
     case 'permissions.delete':
       return handlePermissionDelete(job);
+    case 'menu.create':
+      return handleMenuCreate(job);
+    case 'menu.update':
+      return handleMenuUpdate(job);
+    case 'menu.delete':
+      return handleMenuDelete(job);
+    case 'client.assign_menu':
+      return handleClientAssignMenu(job);
     default:
       logger.warn('Unhandled job type', { jobType: job.type, jobId: job.id });
       throw new Error(`Unhandled job type: ${job.type}`);
   }
+}
+
+async function handleMenuCreate(job: Job): Promise<Record<string, any>> {
+  const payload = job.payload || {};
+  if (!payload.name) throw new Error('Menu name is required');
+  // Content defaults to empty array if not provided
+  const content = Array.isArray(payload.content) ? payload.content : [];
+  
+  const menu = await BootMenuModel.create({
+    name: payload.name,
+    description: payload.description || null,
+    content,
+    is_default: !!payload.is_default,
+  });
+  return { menu };
+}
+
+async function handleMenuUpdate(job: Job): Promise<Record<string, any>> {
+  const payload = job.payload || {};
+  if (!payload.id) throw new Error('Menu ID is required');
+
+  const menu = await BootMenuModel.update(payload.id, {
+    name: payload.name,
+    description: payload.description,
+    content: payload.content,
+    is_default: payload.is_default
+  });
+  return { menu };
+}
+
+async function handleMenuDelete(job: Job): Promise<Record<string, any>> {
+  const payload = job.payload || {};
+  if (!payload.id) throw new Error('Menu ID is required');
+  await BootMenuModel.delete(payload.id);
+  return { deleted: payload.id };
+}
+
+async function handleClientAssignMenu(job: Job): Promise<Record<string, any>> {
+  const payload = job.payload || {};
+  if (!payload.clientId) throw new Error('Client ID is required');
+  // menuId can be null to unassign
+  const menuId = payload.menuId === undefined ? null : payload.menuId;
+
+  const server = await ServerModel.update(payload.clientId, {
+    boot_menu_id: menuId
+  });
+  
+  return { server };
 }

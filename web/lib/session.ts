@@ -14,13 +14,13 @@ export function withSessionHeaders(headers?: HeadersInit): HeadersInit {
   if (!headers) return base;
   if (headers instanceof Headers) {
     headers.forEach((value, key) => {
-      base[key] = value;
+      (base as any)[key] = value;
     });
     return base;
   }
   if (Array.isArray(headers)) {
     for (const [key, value] of headers) {
-      base[String(key)] = String(value);
+      (base as any)[String(key)] = String(value);
     }
     return base;
   }

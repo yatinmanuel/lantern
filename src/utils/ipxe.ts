@@ -13,83 +13,21 @@ export async function generateIpxeMenu(): Promise<{ path: string }> {
   const pxeServerIp = configMap.pxe_server_ip || '192.168.1.10';
   const pxeServerPort = configMap.pxe_server_port || '3000';
   const menuPath = configMap.ipxe_menu_path || '/var/www/html/ipxe/menu.ipxe';
-  const alpineVersion = configMap.alpine_version || 'latest-stable';
-  const alpineMirror = configMap.alpine_mirror || 'https://dl-cdn.alpinelinux.org/alpine';
-
-  const isoEntries = (await IsoModel.getAll()).sort((a, b) => a.label.localeCompare(b.label));
-  const baseUrl = `http://${pxeServerIp}:${pxeServerPort}`;
-
-  const isoMenuItems = isoEntries.map((entry) => {
-    const label = entry.label || entry.iso_name;
-    const key = `iso_${entry.id}`;
-    return { key, label, entry };
-  });
-
-  const isoMenuSection = isoMenuItems.length > 0
-    ? `
-item --gap --          ------------------------- Imported ISOs -------------------------
-${isoMenuItems.map(item => `item ${item.key}           ${item.label}`).join('\n')}`
-    : '';
-
-  const isoMenuTargets = isoMenuItems.map((item) => {
-    const entry = item.entry;
-    const kernelUrl = entry.kernel_path.startsWith('http') ? entry.kernel_path : `${baseUrl}${entry.kernel_path}`;
-    const initrds = entry.initrd_items || [];
-    if (entry.os_type === 'windows') {
-      const initrdLines = initrds.map(initrd => {
-        const url = initrd.path.startsWith('http') ? initrd.path : `${baseUrl}${initrd.path}`;
-        const name = initrd.name ? ` ${initrd.name}` : '';
-        return `initrd ${url}${name}`;
-      }).join('\n');
-      return `
-:${item.key}
-kernel ${kernelUrl}
-${initrdLines}
-boot
-`;
-    }
-    const initrdLines = initrds.map(initrd => {
-      const url = initrd.path.startsWith('http') ? initrd.path : `${baseUrl}${initrd.path}`;
-      return `initrd ${url}`;
-    }).join('\n');
-    const bootArgs = entry.boot_args ? ` ${entry.boot_args}` : '';
-    return `
-:${item.key}
-kernel ${kernelUrl}${bootArgs}
-${initrdLines}
-boot
-`;
-  }).join('\n');
-
+  
+  // New Logic: The static menu just chains to the dynamic API
+  // We use ${net0/mac} to pass the MAC address to the API
   const ipxeMenu = `#!ipxe
 
-set menu-timeout 5000
-set submenu-timeout \${menu-timeout}
-
 :start
-menu Intelligent PXE Server
-item --gap --          ------------------------- Operating Systems -------------------------
-item alpine           Boot Alpine Linux (Universal PXE Agent)
-${isoMenuSection}
-item --gap --
-item --key x exit     Exit to shell
-choose --timeout \${menu-timeout} --default alpine selected || exit
-goto \${selected}
+chain http://${pxeServerIp}:${pxeServerPort}/api/ipxe/boot?mac=\${net0/mac} || goto fallback
 
-:alpine
-echo Booting Alpine Linux with PXE Agent...
-kernel http://${pxeServerIp}/ipxe/alpine/vmlinuz alpine_repo=${alpineMirror}/${alpineVersion}/main modloop=${alpineMirror}/${alpineVersion}/releases/x86_64/netboot/modloop-vanilla PXE_SERVER_URL=http://${pxeServerIp}:${pxeServerPort} quiet
-initrd http://${pxeServerIp}/ipxe/alpine/initramfs
-boot
-
-${isoMenuTargets}
-
-:exit
+:fallback
+echo Failed to load dynamic menu. Falling back to shell.
 shell
 `;
 
   await fs.mkdir(path.dirname(menuPath), { recursive: true });
   await fs.writeFile(menuPath, ipxeMenu);
-  logger.info(`iPXE menu regenerated at ${menuPath}`);
+  logger.info(`iPXE entry point generated at ${menuPath} (chains to dynamic API)`);
   return { path: menuPath };
 }

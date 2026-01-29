@@ -368,3 +368,94 @@ export const IsoModel = {
     return (result.rowCount ?? 0) > 0;
   },
 };
+
+export interface BootMenu {
+  id: number;
+  name: string;
+  description: string | null;
+  content: Record<string, any>[];
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export const BootMenuModel = {
+  async create(menu: Omit<BootMenu, 'id' | 'created_at' | 'updated_at'>): Promise<BootMenu> {
+    const db = getPool();
+    if (menu.is_default) {
+      await db.query('UPDATE boot_menus SET is_default = false');
+    }
+    const result = await db.query(
+      `INSERT INTO boot_menus (name, description, content, is_default)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [menu.name, menu.description, JSON.stringify(menu.content), menu.is_default]
+    );
+    return result.rows[0] as BootMenu;
+  },
+
+  async update(id: number, updates: Partial<BootMenu>): Promise<BootMenu> {
+    const db = getPool();
+    const fields: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+
+    if (updates.name !== undefined) {
+      fields.push(`name = $${idx++}`);
+      values.push(updates.name);
+    }
+    if (updates.description !== undefined) {
+      fields.push(`description = $${idx++}`);
+      values.push(updates.description);
+    }
+    if (updates.content !== undefined) {
+      fields.push(`content = $${idx++}`);
+      values.push(JSON.stringify(updates.content));
+    }
+    if (updates.is_default !== undefined) {
+      if (updates.is_default) {
+        await db.query('UPDATE boot_menus SET is_default = false');
+      }
+      fields.push(`is_default = $${idx++}`);
+      values.push(updates.is_default);
+    }
+
+    if (fields.length === 0) {
+      const existing = await this.findById(id);
+      return existing!;
+    }
+
+    fields.push('updated_at = NOW()');
+    values.push(id);
+
+    const result = await db.query(
+      `UPDATE boot_menus SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return result.rows[0] as BootMenu;
+  },
+
+  async findById(id: number): Promise<BootMenu | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM boot_menus WHERE id = $1', [id]);
+    return (result.rows[0] as BootMenu) || null;
+  },
+
+  async getDefault(): Promise<BootMenu | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM boot_menus WHERE is_default = true LIMIT 1');
+    return (result.rows[0] as BootMenu) || null;
+  },
+
+  async getAll(): Promise<BootMenu[]> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM boot_menus ORDER BY created_at DESC');
+    return result.rows as BootMenu[];
+  },
+
+  async delete(id: number): Promise<boolean> {
+    const db = getPool();
+    const result = await db.query('DELETE FROM boot_menus WHERE id = $1', [id]);
+    return (result.rowCount ?? 0) > 0;
+  },
+};

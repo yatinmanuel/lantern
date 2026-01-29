@@ -1,4 +1,5 @@
 import { initDatabase, closeDatabase } from './database/index.js';
+import { migrateDefaultMenu } from './database/migration.js';
 import { createServer } from './api/server.js';
 import { ServerCleanupService } from './utils/cleanup.js';
 import { natsManager } from './utils/nats-manager.js';
@@ -20,6 +21,12 @@ async function main() {
     // Initialize database
     await initDatabase();
     logger.info('Database initialized');
+
+    try {
+      await migrateDefaultMenu();
+    } catch (error) {
+      logger.warn('Failed to migrate default menu:', error);
+    }
 
     await startJobNotifications();
 

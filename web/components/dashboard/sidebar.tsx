@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Server, Home, Settings, Image, ListChecks } from 'lucide-react';
+import { Server, Home, Settings, Image, ListChecks, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navigation = [

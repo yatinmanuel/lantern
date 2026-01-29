@@ -91,6 +91,19 @@ export async function initDatabase(): Promise<void> {
       boot_args TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS boot_menus (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      content JSONB NOT NULL,
+      is_default BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    ALTER TABLE servers 
+      ADD COLUMN IF NOT EXISTS boot_menu_id INTEGER REFERENCES boot_menus(id) ON DELETE SET NULL;
   `);
 
   await db.query(`

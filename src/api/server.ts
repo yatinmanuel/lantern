@@ -100,6 +100,14 @@ export async function createServer(): Promise<express.Application> {
   const jobsModule = await import('./routes/jobs.js');
   app.use('/api/jobs', jobsModule.jobRoutes);
 
+  // Import menu routes (dynamic import)
+  const menusModule = await import('./routes/menus.js');
+  app.use('/api/boot-menus', menusModule.menuRoutes);
+
+  // Import dynamic iPXE routes (dynamic import)
+  const ipxeModule = await import('./routes/ipxe.js');
+  app.use('/api/ipxe', ipxeModule.ipxeRoutes);
+
   const webRoot = process.env.WEB_ROOT || '/var/www/html';
   const ipxePath = process.env.IPXE_ROOT || path.join(webRoot, 'ipxe');
   const isoPath = process.env.ISO_DIR || path.join(webRoot, 'iso');
