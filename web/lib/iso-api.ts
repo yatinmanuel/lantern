@@ -37,11 +37,14 @@ export const isoApi = {
     return res.json();
   },
 
-  async upload(file: File, options?: { autoExtract?: boolean }): Promise<JobResponse | void> {
+  async upload(file: File, options?: { autoExtract?: boolean; label?: string }): Promise<JobResponse | void> {
     const form = new FormData();
     form.append('file', file);
     if (options?.autoExtract !== undefined) {
       form.append('auto_extract', String(options.autoExtract));
+    }
+    if (options?.label) {
+      form.append('label', options.label);
     }
     const res = await fetch(`${API_BASE_URL}/api/isos`, {
       method: 'POST',
@@ -91,7 +94,7 @@ export const isoApi = {
 
   async downloadFromUrl(
     url: string,
-    options?: { autoExtract?: boolean; fileName?: string }
+    options?: { autoExtract?: boolean; fileName?: string; label?: string }
   ): Promise<JobResponse | void> {
     const res = await fetch(`${API_BASE_URL}/api/isos/remote`, {
       method: 'POST',
@@ -101,6 +104,7 @@ export const isoApi = {
         url,
         auto_extract: options?.autoExtract,
         file_name: options?.fileName,
+        label: options?.label,
       }),
     });
     if (!res.ok) {

@@ -193,6 +193,68 @@ function fileExists(filePath: string): boolean {
   }
 }
 
+function readDirSafe(dirPath: string): string[] {
+  try {
+    return fs.readdirSync(dirPath);
+  } catch {
+    return [];
+  }
+}
+
+function pickAlpineBootFiles(destDir: string): { kernel: string; initrd: string; modloop?: string; repoPath?: string } | null {
+  const bootDir = path.join(destDir, 'boot');
+  if (!fileExists(bootDir)) return null;
+  const entries = readDirSafe(bootDir);
+  const kernels = entries.filter((name) => name === 'vmlinuz' || name.startsWith('vmlinuz-'));
+  const initrds = entries.filter((name) => name === 'initramfs' || name.startsWith('initramfs-'));
+  const modloops = entries.filter((name) => name === 'modloop' || name.startsWith('modloop-'));
+  if (kernels.length === 0 || initrds.length === 0) return null;
+
+  const normalizeFlavor = (name: string, prefix: string) => {
+    if (name === prefix) return '';
+    if (name.startsWith(`${prefix}-`)) return name.slice(prefix.length + 1);
+    return '';
+  };
+
+  let kernel = kernels[0];
+  let initrd = initrds[0];
+  let modloop = modloops[0];
+
+  for (const candidate of kernels) {
+    const flavor = normalizeFlavor(candidate, 'vmlinuz');
+    const initrdMatch = initrds.find((item) =>
+      flavor ? item === `initramfs-${flavor}` : item === 'initramfs'
+    );
+    if (initrdMatch) {
+      kernel = candidate;
+      initrd = initrdMatch;
+      modloop = modloops.find((item) =>
+        flavor ? item === `modloop-${flavor}` : item === 'modloop'
+      ) || modloop;
+      break;
+    }
+  }
+
+  let repoPath: string | undefined;
+  const apksDir = path.join(destDir, 'apks');
+  if (fileExists(apksDir)) {
+    const archDirs = readDirSafe(apksDir).filter((entry) => {
+      try {
+        return fs.statSync(path.join(apksDir, entry)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+    if (archDirs.length > 0) {
+      repoPath = `/apks/${archDirs[0]}`;
+    } else {
+      repoPath = '/apks';
+    }
+  }
+
+  return { kernel, initrd, modloop, repoPath };
+}
+
 export function detectIsoEntry(isoName: string, destDir: string, baseUrl: string): {
   iso_name: string;
   label: string;
@@ -273,6 +335,25 @@ export function detectIsoEntry(isoName: string, destDir: string, baseUrl: string
     };
   }
 
+  const alpineBoot = pickAlpineBootFiles(destDir);
+  if (alpineBoot) {
+    const repoArg = alpineBoot.repoPath
+      ? `alpine_repo=${baseUrl}${isoBasePath}${alpineBoot.repoPath}`
+      : `alpine_repo=${baseUrl}${isoBasePath}/apks`;
+    const modloopArg = alpineBoot.modloop
+      ? `modloop=${baseUrl}${isoBasePath}/boot/${alpineBoot.modloop}`
+      : '';
+    const bootArgs = [repoArg, modloopArg, 'ip=dhcp'].filter(Boolean).join(' ');
+    return {
+      iso_name: isoName,
+      label,
+      os_type: 'alpine',
+      kernel_path: `${isoBasePath}/boot/${alpineBoot.kernel}`,
+      initrd_items: [{ path: `${isoBasePath}/boot/${alpineBoot.initrd}` }],
+      boot_args: bootArgs,
+    };
+  }
+
   const windowsWim = path.join(destDir, 'sources', 'boot.wim');
   const bootSdi = path.join(destDir, 'boot', 'boot.sdi');
   const bootBcd = path.join(destDir, 'boot', 'bcd');
@@ -298,7 +379,10 @@ export function detectIsoEntry(isoName: string, destDir: string, baseUrl: string
   return null;
 }
 
-export async function processIsoFile(filePath: string): Promise<{ entry: Awaited<ReturnType<typeof IsoModel.upsert>> }>{
+export async function processIsoFile(
+  filePath: string,
+  options?: { label?: string }
+): Promise<{ entry: Awaited<ReturnType<typeof IsoModel.upsert>> }>{
   const isoDir = await getIsoDir();
   const fileName = path.basename(filePath);
   const baseName = fileName.replace(/\.iso$/i, '');
@@ -310,6 +394,9 @@ export async function processIsoFile(filePath: string): Promise<{ entry: Awaited
   const entry = detectIsoEntry(fileName, destDir, baseUrl);
   if (!entry) {
     throw new Error('Unsupported ISO layout. Files extracted; configure boot files manually.');
+  }
+  if (options?.label) {
+    entry.label = options.label;
   }
   const stored = await IsoModel.upsert(entry);
   await generateIpxeMenu();

@@ -231,6 +231,7 @@ isoRoutes.post('/', requireAuth, requirePermission('config.edit'), (req: AuthReq
     const autoExtract = autoExtractRaw === undefined
       ? true
       : String(autoExtractRaw).toLowerCase() === 'true';
+    const label = typeof (req.body as any)?.label === 'string' ? (req.body as any).label.trim() : '';
 
     try {
       if (!autoExtract) {
@@ -247,6 +248,7 @@ isoRoutes.post('/', requireAuth, requirePermission('config.edit'), (req: AuthReq
           filePath: file.path,
           fileName: file.filename,
           size: file.size,
+          label: label || undefined,
           meta,
         },
         target_type: 'image',
@@ -344,6 +346,7 @@ isoRoutes.post('/remote', requireAuth, requirePermission('config.edit'), async (
   }
 
   const requestedName = typeof req.body?.file_name === 'string' ? req.body.file_name.trim() : '';
+  const label = typeof req.body?.label === 'string' ? req.body.label.trim() : '';
   const baseName = requestedName || path.basename(parsedUrl.pathname || '');
   const safeName = sanitizeName(baseName || `download-${Date.now()}.iso`);
   if (!safeName.toLowerCase().endsWith('.iso')) {
@@ -366,7 +369,7 @@ isoRoutes.post('/remote', requireAuth, requirePermission('config.edit'), async (
       message: `Extract image ${safeName}`,
       source,
       created_by,
-      payload: { filePath: targetPath, fileName: safeName, meta },
+      payload: { filePath: targetPath, fileName: safeName, label: label || undefined, meta },
       target_type: 'image',
       target_id: safeName,
     });
@@ -379,7 +382,7 @@ isoRoutes.post('/remote', requireAuth, requirePermission('config.edit'), async (
     message: `Download image ${safeName}`,
     source,
     created_by,
-    payload: { url, safeName, auto_extract: autoExtract, meta },
+    payload: { url, safeName, auto_extract: autoExtract, label: label || undefined, meta },
     target_type: 'image',
     target_id: safeName,
   });

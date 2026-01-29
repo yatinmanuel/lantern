@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { authApi, User } from '@/lib/auth-api';
 import { useRouter, usePathname } from 'next/navigation';
 
@@ -20,6 +20,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
   const pathname = usePathname();
+  const authRetryCount = useRef(0);
 
   const getCurrentPath = () => {
     let path = pathname;
@@ -53,6 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const currentUser = await authApi.getCurrentUser();
       console.log('[Auth] refreshUser: Success, user:', currentUser.username);
+      authRetryCount.current = 0;
       setUser(currentUser);
       setLoading(false);
     } catch (error) {
@@ -65,7 +67,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         error.message.includes('Unauthorized')
       );
       if (isUnauthorized) {
+        // Retry once to avoid transient 401s during backend restarts or cookie race conditions
+        if (authRetryCount.current < 1) {
+          authRetryCount.current += 1;
+          console.log('[Auth] refreshUser: 401 - retrying once before clearing session');
+          await new Promise(resolve => setTimeout(resolve, 500));
+          return refreshUser();
+        }
         console.log('[Auth] refreshUser: 401 - clearing user');
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('session_id');
+        }
         setUser(null);
         setLoading(false);
       } else {

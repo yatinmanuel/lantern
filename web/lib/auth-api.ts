@@ -105,14 +105,14 @@ export const authApi = {
     });
     if (!res.ok) {
       if (res.status === 401) {
-        // Clear localStorage on 401
-        console.log('[Auth] 401 Unauthorized - clearing session');
-        setSessionId(null);
         throw new Error('Not authenticated');
       }
       throw new Error(`Failed to get user: ${res.status}`);
     }
-    const user = await res.json();
+    const user = await res.json() as User & { session_id?: string };
+    if (user.session_id) {
+      setSessionId(user.session_id);
+    }
     console.log('[Auth] Successfully restored session for user:', user.username);
     return user;
   },

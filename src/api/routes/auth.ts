@@ -4,6 +4,13 @@ import { AuthRequest, requireAuth } from '../../utils/auth.js';
 import { logger } from '../../utils/logger.js';
 
 export const authRoutes = Router();
+const DEFAULT_SESSION_TTL_DAYS = 36500; // 100 years
+const parsedSessionTtlDays = Number(process.env.SESSION_TTL_DAYS);
+const SESSION_TTL_DAYS = Number.isFinite(parsedSessionTtlDays) && parsedSessionTtlDays > 0
+  ? parsedSessionTtlDays
+  : DEFAULT_SESSION_TTL_DAYS;
+const SESSION_TTL_SECONDS = Math.max(1, Math.floor(SESSION_TTL_DAYS * 24 * 60 * 60));
+const SESSION_COOKIE_MAX_AGE_MS = SESSION_TTL_SECONDS * 1000;
 
 // Login
 authRoutes.post('/login', async (req, res: Response) => {
@@ -29,7 +36,7 @@ authRoutes.post('/login', async (req, res: Response) => {
     }
 
     // Create session
-    const session = await SessionModel.create(user.id, 24 * 7); // 7 days
+    const session = await SessionModel.create(user.id, SESSION_TTL_SECONDS);
 
     // Update last login
     await UserModel.updateLastLogin(user.id);
@@ -43,7 +50,7 @@ authRoutes.post('/login', async (req, res: Response) => {
       secure: isProduction,
       sameSite: 'lax',
       path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      maxAge: SESSION_COOKIE_MAX_AGE_MS,
     });
 
     logger.info(`User logged in: ${username}`, { userId: user.id });
@@ -141,6 +148,7 @@ authRoutes.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
       is_superuser: user.is_superuser,
       is_active: user.is_active,
       last_login: user.last_login,
+      session_id: req.authSession?.id,
     });
   } catch (error) {
     logger.error('Get current user error:', error);

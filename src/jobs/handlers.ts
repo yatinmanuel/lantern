@@ -13,17 +13,32 @@ import { natsManager } from '../utils/nats-manager.js';
 import { sseManager } from '../utils/sse-manager.js';
 import { enqueueJob, appendJobLog } from './service.js';
 
+async function cleanupFailedIso(filePath: string): Promise<void> {
+  const fileName = path.basename(filePath);
+  const isoDir = await getIsoDir();
+  const destDir = path.join(isoDir, fileName.replace(/\.iso$/i, ''));
+  await fsp.rm(filePath, { force: true });
+  await fsp.rm(destDir, { recursive: true, force: true });
+  await IsoModel.deleteByIsoName(fileName);
+}
+
 async function handleImagesImport(job: Job): Promise<Record<string, any>> {
   const filePath = job.payload?.filePath as string | undefined;
   if (!filePath) throw new Error('Missing filePath');
   await appendJobLog(job.id, `Extracting ${path.basename(filePath)}`);
   try {
-    const result = await processIsoFile(filePath);
+    const result = await processIsoFile(filePath, { label: job.payload?.label });
     await appendJobLog(job.id, `iPXE entry generated for ${result.entry.label}`);
     return { filePath, entry: result.entry };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const isUnsupported = message.toLowerCase().includes('unsupported iso layout');
+    if (isUnsupported) {
+      await appendJobLog(job.id, message, 'warn');
+      return { filePath, unsupported: true };
+    }
     await appendJobLog(job.id, message, 'error');
+    await cleanupFailedIso(filePath);
     throw error;
   }
 }
@@ -33,12 +48,18 @@ async function handleImagesExtract(job: Job): Promise<Record<string, any>> {
   if (!filePath) throw new Error('Missing filePath');
   await appendJobLog(job.id, `Extracting ${path.basename(filePath)}`);
   try {
-    const result = await processIsoFile(filePath);
+    const result = await processIsoFile(filePath, { label: job.payload?.label });
     await appendJobLog(job.id, `iPXE entry generated for ${result.entry.label}`);
     return { filePath, entry: result.entry };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const isUnsupported = message.toLowerCase().includes('unsupported iso layout');
+    if (isUnsupported) {
+      await appendJobLog(job.id, message, 'warn');
+      return { filePath, unsupported: true };
+    }
     await appendJobLog(job.id, message, 'error');
+    await cleanupFailedIso(filePath);
     throw error;
   }
 }
@@ -67,7 +88,12 @@ async function handleImagesDownload(job: Job): Promise<Record<string, any>> {
       message: `Extract image ${safeName}`,
       source: job.source || 'system',
       created_by: job.created_by ?? null,
-      payload: { filePath: targetPath, fileName: safeName, meta: job.payload?.meta },
+      payload: {
+        filePath: targetPath,
+        fileName: safeName,
+        label: job.payload?.label,
+        meta: job.payload?.meta,
+      },
       target_type: 'image',
       target_id: safeName,
     });
@@ -92,7 +118,12 @@ async function handleImagesDownload(job: Job): Promise<Record<string, any>> {
     message: `Extract image ${safeName}`,
     source: job.source || 'system',
     created_by: job.created_by ?? null,
-    payload: { filePath: targetPath, fileName: safeName, meta: job.payload?.meta },
+    payload: {
+      filePath: targetPath,
+      fileName: safeName,
+      label: job.payload?.label,
+      meta: job.payload?.meta,
+    },
     target_type: 'image',
     target_id: safeName,
   });
@@ -179,7 +210,7 @@ async function handleImagesRemote(job: Job): Promise<Record<string, any>> {
 
   try {
     await downloadIsoFromUrl(url, targetPath);
-    const result = await processIsoFile(targetPath);
+    const result = await processIsoFile(targetPath, { label: job.payload?.label });
     return { fileName: safeName, entry: result.entry };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
