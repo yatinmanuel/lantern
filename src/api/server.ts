@@ -92,6 +92,10 @@ export async function createServer(): Promise<express.Application> {
   const isoModule = await import('./routes/isos.js');
   app.use('/api/isos', isoModule.isoRoutes);
 
+  // Import image routes (dynamic import)
+  const imageModule = await import('./routes/images.js');
+  app.use('/api/images', imageModule.imageRoutes);
+
   // Import job routes (dynamic import)
   const jobsModule = await import('./routes/jobs.js');
   app.use('/api/jobs', jobsModule.jobRoutes);

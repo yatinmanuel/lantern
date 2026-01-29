@@ -10,9 +10,13 @@ export type IsoFile = {
   size: number;
   modified_at: string;
   url?: string | null;
+  extracted?: boolean;
   entry?: {
     label: string;
     os_type: string;
+    kernel_path?: string;
+    initrd_items?: { path: string; name?: string }[];
+    boot_args?: string | null;
   } | null;
 };
 

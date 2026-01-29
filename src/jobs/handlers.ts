@@ -6,7 +6,16 @@ import { IsoModel, ServerModel, TaskModel, PXEConfigModel } from '../database/mo
 import { UserModel, RoleModel, PermissionModel } from '../database/user-models.js';
 import { logger } from '../utils/logger.js';
 import { generateIpxeMenu } from '../utils/ipxe.js';
-import { sanitizeName, getIsoDir, ensureDirSync, downloadIsoFromUrl, processIsoFile, scanIsoDirectory } from '../utils/iso-tools.js';
+import {
+  sanitizeName,
+  getIsoDir,
+  ensureDirSync,
+  downloadIsoFromUrl,
+  extractIso,
+  processIsoFile,
+  buildImageFromExtracted,
+  scanIsoDirectory,
+} from '../utils/iso-tools.js';
 import { applyConfiguration, regenerateDnsmasqConfig, restartDnsmasq } from '../utils/config-service.js';
 import { executeInstallation } from '../tasks/installer.js';
 import { natsManager } from '../utils/nats-manager.js';
@@ -39,6 +48,98 @@ async function handleImagesImport(job: Job): Promise<Record<string, any>> {
     }
     await appendJobLog(job.id, message, 'error');
     await cleanupFailedIso(filePath);
+    throw error;
+  }
+}
+
+async function handleImagesAdd(job: Job): Promise<Record<string, any>> {
+  const filePath = job.payload?.filePath as string | undefined;
+  if (!filePath) throw new Error('Missing filePath');
+  const autoExtractRaw = job.payload?.auto_extract;
+  const autoExtract = autoExtractRaw === undefined
+    ? true
+    : String(autoExtractRaw).toLowerCase() === 'true';
+
+  if (!autoExtract) {
+    await appendJobLog(job.id, `Added ${path.basename(filePath)} (no extraction)`);
+    return {
+      filePath,
+      fileName: job.payload?.fileName || path.basename(filePath),
+      autoExtract: false,
+    };
+  }
+
+  const extractJob = await enqueueJob({
+    type: 'iso.extract',
+    category: 'images',
+    message: `Extract ISO ${path.basename(filePath)}`,
+    source: job.source || 'system',
+    created_by: job.created_by ?? null,
+    payload: {
+      filePath,
+      fileName: job.payload?.fileName || path.basename(filePath),
+      label: job.payload?.label,
+      meta: job.payload?.meta,
+    },
+    target_type: 'iso',
+    target_id: job.payload?.fileName || path.basename(filePath),
+  });
+
+  return { filePath, extractJobId: extractJob.id };
+}
+
+async function handleIsoExtract(job: Job): Promise<Record<string, any>> {
+  const filePath = job.payload?.filePath as string | undefined;
+  const fileName = (job.payload?.fileName as string | undefined) || (filePath ? path.basename(filePath) : undefined);
+  if (!filePath || !fileName) throw new Error('Missing filePath');
+
+  const isoDir = await getIsoDir();
+  const baseName = fileName.replace(/\.iso$/i, '');
+  const destDir = path.join(isoDir, baseName);
+
+  await appendJobLog(job.id, `Extracting ${fileName}`);
+  try {
+    await extractIso(filePath, destDir);
+    const buildJob = await enqueueJob({
+      type: 'images.build',
+      category: 'images',
+      message: `Build image ${fileName}`,
+      source: job.source || 'system',
+      created_by: job.created_by ?? null,
+      payload: {
+        filePath,
+        fileName,
+        label: job.payload?.label,
+        meta: job.payload?.meta,
+      },
+      target_type: 'image',
+      target_id: fileName,
+    });
+    return { filePath, destDir, buildJobId: buildJob.id };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await appendJobLog(job.id, message, 'error');
+    await cleanupFailedIso(filePath);
+    throw error;
+  }
+}
+
+async function handleImagesBuild(job: Job): Promise<Record<string, any>> {
+  const filePath = job.payload?.filePath as string | undefined;
+  if (!filePath) throw new Error('Missing filePath');
+  await appendJobLog(job.id, `Building image entry for ${path.basename(filePath)}`);
+  try {
+    const result = await buildImageFromExtracted(filePath, { label: job.payload?.label });
+    await appendJobLog(job.id, `iPXE entry generated for ${result.entry.label}`);
+    return { filePath, entry: result.entry };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const isUnsupported = message.toLowerCase().includes('unsupported iso layout');
+    if (isUnsupported) {
+      await appendJobLog(job.id, message, 'warn');
+      return { filePath, unsupported: true };
+    }
+    await appendJobLog(job.id, message, 'error');
     throw error;
   }
 }
@@ -79,25 +180,28 @@ async function handleImagesDownload(job: Job): Promise<Record<string, any>> {
       throw new Error('Image already exists');
     }
     await appendJobLog(job.id, `Found existing ISO on disk: ${safeName}`);
-    if (job.payload?.auto_extract === false) {
-      return { fileName: safeName, filePath: targetPath, exists: true };
-    }
-    const extractJob = await enqueueJob({
-      type: 'images.extract',
+    const addJob = await enqueueJob({
+      type: 'images.add',
       category: 'images',
-      message: `Extract image ${safeName}`,
+      message: `Add image ${safeName}`,
       source: job.source || 'system',
       created_by: job.created_by ?? null,
       payload: {
         filePath: targetPath,
         fileName: safeName,
+        auto_extract: job.payload?.auto_extract,
         label: job.payload?.label,
         meta: job.payload?.meta,
       },
-      target_type: 'image',
+      target_type: 'iso',
       target_id: safeName,
     });
-    return { fileName: safeName, filePath: targetPath, exists: true, extractJobId: extractJob.id };
+    return {
+      fileName: safeName,
+      filePath: targetPath,
+      exists: true,
+      addJobId: addJob.id,
+    };
   }
 
   await appendJobLog(job.id, `Downloading ${safeName}`);
@@ -109,25 +213,23 @@ async function handleImagesDownload(job: Job): Promise<Record<string, any>> {
     void appendJobLog(job.id, message).catch(() => {});
   });
   await appendJobLog(job.id, `Download complete: ${safeName}`);
-  if (job.payload?.auto_extract === false) {
-    return { fileName: safeName, filePath: targetPath };
-  }
-  const extractJob = await enqueueJob({
-    type: 'images.extract',
+  const addJob = await enqueueJob({
+    type: 'images.add',
     category: 'images',
-    message: `Extract image ${safeName}`,
+    message: `Add image ${safeName}`,
     source: job.source || 'system',
     created_by: job.created_by ?? null,
     payload: {
       filePath: targetPath,
       fileName: safeName,
+      auto_extract: job.payload?.auto_extract,
       label: job.payload?.label,
       meta: job.payload?.meta,
     },
-    target_type: 'image',
+    target_type: 'iso',
     target_id: safeName,
   });
-  return { fileName: safeName, filePath: targetPath, extractJobId: extractJob.id };
+  return { fileName: safeName, filePath: targetPath, addJobId: addJob.id };
 }
 
 async function handleImagesManual(job: Job): Promise<Record<string, any>> {
@@ -559,6 +661,12 @@ export async function runJobHandler(job: Job): Promise<Record<string, any>> {
       return handleImagesImport(job);
     case 'images.extract':
       return handleImagesExtract(job);
+    case 'iso.extract':
+      return handleIsoExtract(job);
+    case 'images.add':
+      return handleImagesAdd(job);
+    case 'images.build':
+      return handleImagesBuild(job);
     case 'images.download':
       return handleImagesDownload(job);
     case 'images.manual':

@@ -342,7 +342,7 @@ export const IsoModel = {
         entry.label,
         entry.os_type,
         entry.kernel_path,
-        entry.initrd_items || [],
+        JSON.stringify(entry.initrd_items || []),
         entry.boot_args,
       ]
     );

@@ -8,6 +8,9 @@ const IMAGE_CONCURRENCY_LIMIT = parseInt(process.env.JOB_IMAGES_CONCURRENCY || '
 const MAX_ATTEMPTS_BY_TYPE: Record<string, number> = {
   'images.import': 2,
   'images.extract': 2,
+  'images.add': 2,
+  'images.build': 2,
+  'iso.extract': 2,
   'images.download': 3,
   'images.manual': 2,
   'images.attach': 2,

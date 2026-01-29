@@ -6,6 +6,7 @@ import { Download, Folder, File as FileIcon, HardDrive, Loader2, Plus, Trash2, U
 
 import { ColumnDef } from '@tanstack/react-table';
 import { isoApi, IsoFile, RemoteImageMeta, ExtractedFile } from '@/lib/iso-api';
+import { imageApi, ImageEntry } from '@/lib/image-api';
 import { Job, jobsApi } from '@/lib/jobs-api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -41,10 +42,16 @@ type UploadMode = 'iso' | 'manual' | 'url';
 type ManualMode = 'upload' | 'extracted';
 type TabMode = 'images' | 'isos';
 type IsoDisplay = IsoFile & { pending?: boolean; jobId?: string };
+type ImageDisplay = ImageEntry & { pending?: boolean; jobId?: string };
+type ManageItem =
+  | { kind: 'iso'; data: IsoDisplay }
+  | { kind: 'image'; data: ImageDisplay };
 
 export function IsoManager() {
   const [isoFiles, setIsoFiles] = useState<IsoDisplay[]>([]);
   const [isoLoading, setIsoLoading] = useState(true);
+  const [imageEntries, setImageEntries] = useState<ImageDisplay[]>([]);
+  const [imagesLoading, setImagesLoading] = useState(true);
   const [isoUploading, setIsoUploading] = useState(false);
   const [isoFile, setIsoFile] = useState<File | null>(null);
   const [isoMessage, setIsoMessage] = useState<string | null>(null);
@@ -53,7 +60,7 @@ export function IsoManager() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabMode>('images');
   const [manageOpen, setManageOpen] = useState(false);
-  const [manageItem, setManageItem] = useState<IsoDisplay | null>(null);
+  const [manageItem, setManageItem] = useState<ManageItem | null>(null);
   const [uploadInputKey, setUploadInputKey] = useState(0);
   const [manualInputKey, setManualInputKey] = useState(0);
   const [uploadMode, setUploadMode] = useState<UploadMode>('iso');
@@ -70,6 +77,7 @@ export function IsoManager() {
   const [extractedFilter, setExtractedFilter] = useState('');
   const [extractedDir, setExtractedDir] = useState('');
   const [extractedBrowserOpen, setExtractedBrowserOpen] = useState(false);
+  const [browserContext, setBrowserContext] = useState<'manual' | 'manage'>('manual');
   const [remoteUrl, setRemoteUrl] = useState('');
   const [remoteMeta, setRemoteMeta] = useState<RemoteImageMeta | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(false);
@@ -77,11 +85,19 @@ export function IsoManager() {
   const [remoteLabel, setRemoteLabel] = useState('');
   const [remoteFileName, setRemoteFileName] = useState('');
   const [remoteFileNameEdited, setRemoteFileNameEdited] = useState(false);
+  const [manageLabel, setManageLabel] = useState('');
+  const [manageOsType, setManageOsType] = useState('');
+  const [manageKernelPath, setManageKernelPath] = useState('');
+  const [manageInitrdPath, setManageInitrdPath] = useState('');
+  const [manageBootArgs, setManageBootArgs] = useState('');
+  const [manageSaving, setManageSaving] = useState(false);
 
   useEffect(() => {
     loadIsos();
+    loadImages();
     const interval = setInterval(() => {
       loadIsos({ showLoading: false, silent: true });
+      loadImages({ showLoading: false, silent: true });
     }, 10000);
     return () => clearInterval(interval);
   }, []);
@@ -110,9 +126,9 @@ export function IsoManager() {
         setIsoMessage(null);
       }
     } catch (error) {
-      console.error('Failed to load images:', error);
+      console.error('Failed to load ISOs:', error);
       if (!silent) {
-        setIsoMessage('Failed to load image list.');
+        setIsoMessage('Failed to load ISO list.');
       }
     } finally {
       if (showLoading) {
@@ -120,6 +136,44 @@ export function IsoManager() {
       }
     }
   }
+
+  async function loadImages(options?: { showLoading?: boolean; silent?: boolean }) {
+    const { showLoading = true, silent = false } = options ?? {};
+    try {
+      if (showLoading) {
+        setImagesLoading(true);
+      }
+      const entries = await imageApi.list();
+      setImageEntries(entries.map((entry) => ({
+        ...entry,
+        initrd_items: entry.initrd_items || [],
+      })));
+      if (!silent) {
+        setIsoMessage(null);
+      }
+    } catch (error) {
+      console.error('Failed to load image entries:', error);
+      if (!silent) {
+        setIsoMessage('Failed to load image entries.');
+      }
+    } finally {
+      if (showLoading) {
+        setImagesLoading(false);
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (!manageOpen || manageItem?.kind !== 'image') return;
+    setManageLabel(manageItem.data.label || '');
+    setManageOsType(manageItem.data.os_type || '');
+    setManageKernelPath(manageItem.data.kernel_path || '');
+    setManageInitrdPath(manageItem.data.initrd_items?.[0]?.path || '');
+    setManageBootArgs(manageItem.data.boot_args || '');
+    if (manageItem.data.iso_name?.toLowerCase().endsWith('.iso')) {
+      setExtractedIsoName(manageItem.data.iso_name);
+    }
+  }, [manageOpen, manageItem]);
 
   function resetUploadForm() {
     setIsoFile(null);
@@ -147,16 +201,37 @@ export function IsoManager() {
     setUploadMode('iso');
   }
 
+  function resolveJobTargetId(job: Job): string | null {
+    if (job.target_id) return job.target_id;
+    const payload = job.payload || {};
+    if (typeof payload.fileName === 'string' && payload.fileName) return payload.fileName;
+    if (typeof payload.safeName === 'string' && payload.safeName) return payload.safeName;
+    if (typeof payload.iso_name === 'string' && payload.iso_name) return payload.iso_name;
+    return null;
+  }
+
+  function resolveJobLabel(job: Job): string {
+    const payload = job.payload || {};
+    if (typeof payload.fileName === 'string' && payload.fileName) return payload.fileName;
+    if (typeof payload.safeName === 'string' && payload.safeName) return payload.safeName;
+    if (typeof payload.label === 'string' && payload.label) return payload.label;
+    if (job.target_id) return job.target_id;
+    if (job.message) return job.message;
+    return 'Pending';
+  }
+
+  function affectsIsoList(job: Job): boolean {
+    if (job.target_type === 'iso') return true;
+    if (job.type === 'images.build') return true;
+    return ['images.download', 'images.add', 'iso.extract', 'images.extract'].includes(job.type);
+  }
+
   function addPendingFromJob(job: Job) {
     if (job.category !== 'images') return;
-    const id = job.target_id || `pending:${job.id}`;
-    const label =
-      (job.payload && typeof job.payload.label === 'string' && job.payload.label) ||
-      (job.payload && typeof job.payload.fileName === 'string' && job.payload.fileName) ||
-      (job.payload && typeof job.payload.safeName === 'string' && job.payload.safeName) ||
-      job.target_id ||
-      job.message ||
-      'Pending image';
+    if (!affectsIsoList(job)) return;
+    const targetId = resolveJobTargetId(job);
+    const id = targetId || `pending:${job.id}`;
+    const label = targetId || resolveJobLabel(job);
     setIsoFiles((prev) => {
       if (prev.some((file) => file.id === id)) {
         return prev.map((file) => file.id === id ? { ...file, pending: true, jobId: job.id } : file);
@@ -195,6 +270,7 @@ export function IsoManager() {
       setIsoMessage(autoExtract ? 'Image queued for import.' : 'ISO uploaded.');
       setUploadOpen(false);
       await loadIsos({ showLoading: false, silent: true });
+      await loadImages({ showLoading: false, silent: true });
     } catch (error) {
       console.error('Failed to upload image:', error);
       setIsoMessage(error instanceof Error ? error.message : 'Failed to upload image.');
@@ -225,7 +301,7 @@ export function IsoManager() {
       }
       setIsoMessage('Image queued for import.');
       setUploadOpen(false);
-      await loadIsos({ showLoading: false, silent: true });
+      await loadImages({ showLoading: false, silent: true });
     } catch (error) {
       console.error('Failed to add image:', error);
       setIsoMessage(error instanceof Error ? error.message : 'Failed to add image.');
@@ -261,7 +337,7 @@ export function IsoManager() {
       }
       setIsoMessage('Boot files queued for attach.');
       setUploadOpen(false);
-      await loadIsos({ showLoading: false, silent: true });
+      await loadImages({ showLoading: false, silent: true });
     } catch (error) {
       console.error('Failed to attach boot files:', error);
       setIsoMessage(error instanceof Error ? error.message : 'Failed to attach boot files.');
@@ -292,6 +368,7 @@ export function IsoManager() {
       setIsoMessage(remoteAutoExtract ? 'Image download queued.' : 'ISO download queued.');
       setUploadOpen(false);
       await loadIsos({ showLoading: false, silent: true });
+      await loadImages({ showLoading: false, silent: true });
     } catch (error) {
       console.error('Failed to download image:', error);
       setIsoMessage(error instanceof Error ? error.message : 'Failed to download image.');
@@ -342,38 +419,86 @@ export function IsoManager() {
   }
 
   async function handleDeleteIso(id: string, displayName: string) {
-    if (!confirm(`Delete image ${displayName}?`)) return;
+    if (!confirm(`Delete ISO ${displayName}?`)) return;
     try {
       await isoApi.remove(id);
-      setIsoMessage('Image delete queued.');
-      if (manageItem?.id === id) {
+      setIsoMessage('ISO delete queued.');
+      if (manageItem?.kind === 'iso' && manageItem.data.id === id) {
         setManageOpen(false);
         setManageItem(null);
       }
       await loadIsos({ showLoading: false, silent: true });
     } catch (error) {
-      console.error('Failed to delete image:', error);
-      setIsoMessage(error instanceof Error ? error.message : 'Failed to delete image.');
+      console.error('Failed to delete ISO:', error);
+      setIsoMessage(error instanceof Error ? error.message : 'Failed to delete ISO.');
     }
   }
 
-  function openManage(item: IsoDisplay) {
-    setManageItem(item);
+  async function handleDeleteImage(id: string, displayName: string) {
+    if (!confirm(`Delete image entry ${displayName}?`)) return;
+    try {
+      await imageApi.remove(id);
+      setIsoMessage('Image entry removed.');
+      if (manageItem?.kind === 'image' && manageItem.data.id === id) {
+        setManageOpen(false);
+        setManageItem(null);
+      }
+      await loadImages({ showLoading: false, silent: true });
+    } catch (error) {
+      console.error('Failed to delete image entry:', error);
+      setIsoMessage(error instanceof Error ? error.message : 'Failed to delete image entry.');
+    }
+  }
+
+  async function handleUpdateImageEntry() {
+    if (!manageItem || manageItem.kind !== 'image') return;
+    if (!manageLabel.trim()) {
+      setIsoMessage('Add a name for this image.');
+      return;
+    }
+    if (!manageKernelPath.trim() || !manageInitrdPath.trim()) {
+      setIsoMessage('Select both kernel and initrd paths.');
+      return;
+    }
+    try {
+      setManageSaving(true);
+      const response = await isoApi.attachFromExtracted({
+        isoName: manageItem.data.iso_name,
+        label: manageLabel.trim(),
+        kernelPath: manageKernelPath.trim(),
+        initrdPaths: [manageInitrdPath.trim()],
+        osType: manageOsType.trim() || undefined,
+        bootArgs: manageBootArgs.trim() || undefined,
+      });
+      if (response?.job) {
+        addPendingFromJob(response.job);
+      }
+      setIsoMessage('Image update queued.');
+      setManageOpen(false);
+      await loadImages({ showLoading: false, silent: true });
+    } catch (error) {
+      console.error('Failed to update image entry:', error);
+      setIsoMessage(error instanceof Error ? error.message : 'Failed to update image entry.');
+    } finally {
+      setManageSaving(false);
+    }
+  }
+
+  function openManageIso(item: IsoDisplay) {
+    setManageItem({ kind: 'iso', data: item });
     setManageOpen(true);
   }
 
-  function openAttachFor(item: IsoDisplay) {
-    setUploadMode('manual');
-    setManualMode('extracted');
-    setExtractedIsoName(item.id);
-    if (!manualLabel.trim()) {
-      setManualLabel(item.entry?.label || item.name.replace(/\.iso$/i, ''));
+  function openManageImage(item: ImageDisplay) {
+    setManageItem({ kind: 'image', data: item });
+    if (item.iso_name?.toLowerCase().endsWith('.iso')) {
+      setExtractedIsoName(item.iso_name);
     }
-    setUploadOpen(true);
-    setManageOpen(false);
+    setManageOpen(true);
   }
 
-  function openExtractedBrowser() {
+  function openExtractedBrowser(context: 'manual' | 'manage' = 'manual') {
+    setBrowserContext(context);
     if (!extractedIsoName) {
       setIsoMessage('Select an extracted ISO first.');
       return;
@@ -381,43 +506,20 @@ export function IsoManager() {
     setExtractedBrowserOpen(true);
   }
 
-  const columns: ColumnDef<IsoDisplay>[] = useMemo(
+  const isoColumns: ColumnDef<IsoDisplay>[] = useMemo(
     () => [
       {
         accessorKey: 'name',
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="Image Name" />
+          <DataTableColumnHeader column={column} title="ISO File" />
         ),
         cell: ({ row }) => {
           const file = row.original;
-          const displayName = file.entry?.label || file.name;
           return (
-            <div className="space-y-1">
-              <div className="font-medium">{displayName}</div>
-              <div className="text-xs text-muted-foreground">
-                Updated {new Date(file.modified_at).toLocaleString()}
-              </div>
+            <div className="flex items-center gap-2">
+              <div className="font-medium truncate">{file.name}</div>
+              {file.pending && <Badge variant="secondary">Processing</Badge>}
             </div>
-          );
-        },
-      },
-      {
-        id: 'entry',
-        header: ({ column }) => (
-          <DataTableColumnHeader column={column} title="PXE Entry" />
-        ),
-        cell: ({ row }) => {
-          const entry = row.original.entry;
-          if (row.original.pending) {
-            return <Badge variant="secondary">Processing</Badge>;
-          }
-          return entry ? (
-            <div className="space-y-1">
-              <div className="font-medium">{entry.label}</div>
-              <Badge variant="secondary">{entry.os_type}</Badge>
-            </div>
-          ) : (
-            <Badge variant="outline">Not imported</Badge>
           );
         },
       },
@@ -452,7 +554,6 @@ export function IsoManager() {
         header: 'Actions',
         cell: ({ row }) => {
           const file = row.original;
-          const displayName = file.entry?.label || file.name;
           return (
             <div className="flex items-center justify-end gap-2">
               {file.url ? (
@@ -468,15 +569,15 @@ export function IsoManager() {
                   Download
                 </Button>
               )}
-                <Button
+              <Button
                 variant="ghost"
                 size="sm"
                 onClick={(event) => {
                   event.stopPropagation();
-                  handleDeleteIso(file.id, displayName);
+                  handleDeleteIso(file.id, file.name);
                 }}
                 className="text-destructive hover:text-destructive"
-                title="Delete image"
+                title="Delete ISO"
               >
                 <Trash2 className="h-4 w-4" />
               </Button>
@@ -487,6 +588,78 @@ export function IsoManager() {
       },
     ],
     [handleDeleteIso]
+  );
+
+  const imageColumns: ColumnDef<ImageDisplay>[] = useMemo(
+    () => [
+      {
+        accessorKey: 'label',
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Image" />
+        ),
+        cell: ({ row }) => (
+          <div className="font-medium">{row.original.label}</div>
+        ),
+      },
+      {
+        accessorKey: 'kernel_path',
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Kernel" />
+        ),
+        cell: ({ row }) => (
+          <div className="text-xs font-mono truncate max-w-[240px]" title={row.original.kernel_path}>
+            {row.original.kernel_path}
+          </div>
+        ),
+      },
+      {
+        id: 'initrd',
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Initrd" />
+        ),
+        cell: ({ row }) => (
+          <div
+            className="text-xs font-mono truncate max-w-[240px]"
+            title={row.original.initrd_items?.[0]?.path || ''}
+          >
+            {row.original.initrd_items?.[0]?.path || '—'}
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'created_at',
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title="Created" />
+        ),
+        cell: ({ row }) => (
+          <div className="text-sm text-muted-foreground">
+            {new Date(row.original.created_at).toLocaleString()}
+          </div>
+        ),
+      },
+      {
+        id: 'actions',
+        header: 'Actions',
+        cell: ({ row }) => (
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(event) => {
+                event.stopPropagation();
+                handleDeleteImage(row.original.id, row.original.label);
+              }}
+              className="text-destructive hover:text-destructive"
+              title="Delete image entry"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        ),
+        enableHiding: false,
+      },
+    ],
+    [handleDeleteImage]
   );
 
   const extractedKernelOptions = useMemo(() => {
@@ -557,12 +730,17 @@ export function IsoManager() {
     return entries;
   }, [extractedFiles, extractedFilter, extractedRoot, extractedDir]);
 
+  const manageCanBrowse = useMemo(() => {
+    if (!manageItem || manageItem.kind !== 'image') return false;
+    return manageItem.data.iso_name?.toLowerCase().endsWith('.iso');
+  }, [manageItem]);
+
   const imageItems = useMemo(() => {
-    return isoFiles.filter((file) => file.pending || !!file.entry || file.id.startsWith('manual:'));
-  }, [isoFiles]);
+    return imageEntries;
+  }, [imageEntries]);
 
   const isoItems = useMemo(() => {
-    return isoFiles.filter((file) => file.id.toLowerCase().endsWith('.iso'));
+    return isoFiles;
   }, [isoFiles]);
 
   useEffect(() => {
@@ -608,14 +786,14 @@ export function IsoManager() {
         return;
       }
       if (job.status === 'completed' || job.status === 'failed') {
-        const targetId = job.target_id;
-        const keepPendingForDownload =
-          job.type === 'images.download' &&
-          job.status === 'completed' &&
-          job.result &&
-          typeof job.result.extractJobId === 'string';
+        const targetId = resolveJobTargetId(job);
+        const hasFollowUpJob = job.result && (
+          typeof job.result.addJobId === 'string' ||
+          typeof job.result.extractJobId === 'string' ||
+          typeof job.result.buildJobId === 'string'
+        );
 
-        if (targetId && !keepPendingForDownload) {
+        if (targetId && !hasFollowUpJob && affectsIsoList(job)) {
           if (job.status === 'failed') {
             setIsoFiles((prev) => prev.filter((file) => file.id !== targetId));
           } else {
@@ -623,6 +801,7 @@ export function IsoManager() {
           }
         }
         loadIsos({ showLoading: false, silent: true });
+        loadImages({ showLoading: false, silent: true });
       }
     });
     return () => source.close();
@@ -708,7 +887,7 @@ export function IsoManager() {
               Add Image
             </Button>
           </DialogTrigger>
-          <DialogContent className="w-[1000px] max-w-[95vw] h-[600px] gap-0 p-0 overflow-hidden outline-none duration-200 sm:rounded-xl flex flex-col">
+          <DialogContent className="!w-[95vw] !max-w-5xl h-[80vh] max-h-[42rem] gap-0 p-0 overflow-hidden outline-none duration-200 sm:rounded-xl flex flex-col">
             <div className="px-6 py-4 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 shrink-0">
               <DialogHeader>
                 <DialogTitle className="text-xl font-medium">Add Image</DialogTitle>
@@ -890,7 +1069,7 @@ export function IsoManager() {
                                   <Label>Kernel Path</Label>
                                   <Input value={extractedKernelPath} readOnly placeholder="Select from explorer" />
                                </div>
-                               <Button variant="outline" onClick={openExtractedBrowser}>Browse</Button>
+                               <Button variant="outline" onClick={() => openExtractedBrowser('manual')}>Browse</Button>
                              </div>
                              <div className="flex-1 space-y-2">
                                 <Label>Initrd Path</Label>
@@ -1020,95 +1199,197 @@ export function IsoManager() {
             }
           }}
         >
-          <DialogContent className="w-[600px] max-w-[90vw] h-[450px] gap-0 p-0 overflow-hidden sm:rounded-xl flex flex-col">
+        <DialogContent className="w-[95vw] max-w-5xl h-[80vh] max-h-[40rem] gap-0 p-0 overflow-hidden sm:rounded-xl flex flex-col">
             <div className="px-6 py-5 border-b bg-background/95 backdrop-blur">
               <DialogHeader>
-                <DialogTitle className="text-lg font-medium tracking-tight">Manage Image</DialogTitle>
+                <DialogTitle className="text-lg font-medium tracking-tight">
+                  {manageItem?.kind === 'image' ? 'Manage Image Entry' : 'Manage ISO'}
+                </DialogTitle>
                 <DialogDescription className="text-muted-foreground mt-1">
-                  {manageItem?.entry?.label || manageItem?.name || 'Image details'}
+                  {manageItem?.kind === 'image'
+                    ? manageItem.data.label
+                    : manageItem?.kind === 'iso'
+                      ? manageItem.data.name
+                      : 'Details'}
                 </DialogDescription>
               </DialogHeader>
             </div>
-            
-            <div className="p-6 space-y-6 flex-1 flex flex-col justify-between">
-            {manageItem ? (
-              <div className="space-y-4 text-sm">
-                <div className="grid grid-cols-3 gap-2 py-2 border-b border-border/50">
-                  <span className="text-muted-foreground col-span-1">Type</span>
-                  <span className="font-medium col-span-2 text-right">
-                    {manageItem.id.startsWith('manual:') ? 'Manual entry' : 'ISO file'}
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 gap-2 py-2 border-b border-border/50">
-                  <span className="text-muted-foreground col-span-1">Status</span>
-                  <span className="font-medium col-span-2 text-right">
-                    {manageItem.pending
-                      ? <span className="inline-flex items-center text-yellow-600 dark:text-yellow-400">
-                          <Loader2 className="mr-1.5 h-3 w-3 animate-spin"/> Processing
+
+            {manageItem?.kind === 'iso' ? (
+              <div className="p-6 space-y-6 flex-1 flex flex-col justify-between">
+                <div className="space-y-4 text-sm">
+                  <div className="grid grid-cols-3 gap-2 py-2 border-b border-border/50">
+                    <span className="text-muted-foreground col-span-1">Type</span>
+                    <span className="font-medium col-span-2 text-right">ISO file</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 py-2 border-b border-border/50">
+                    <span className="text-muted-foreground col-span-1">Status</span>
+                    <span className="font-medium col-span-2 text-right">
+                      {manageItem.data.pending ? (
+                        <span className="inline-flex items-center text-yellow-600 dark:text-yellow-400">
+                          <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> Processing
                         </span>
-                      : manageItem.entry
-                        ? <span className="text-green-600 dark:text-green-400">Imported</span>
-                        : 'Not imported'}
-                  </span>
+                      ) : (
+                        'Available'
+                      )}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 py-2 border-b border-border/50">
+                    <span className="text-muted-foreground col-span-1">File Name</span>
+                    <span className="font-medium col-span-2 text-right truncate" title={manageItem.data.name}>
+                      {manageItem.data.name}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 py-2 border-b border-border/50">
+                    <span className="text-muted-foreground col-span-1">Size</span>
+                    <span className="font-medium col-span-2 text-right">{formatBytes(manageItem.data.size)}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 py-2">
+                    <span className="text-muted-foreground col-span-1">Updated</span>
+                    <span className="font-medium col-span-2 text-right">
+                      {new Date(manageItem.data.modified_at).toLocaleDateString()}
+                    </span>
+                  </div>
                 </div>
-                <div className="grid grid-cols-3 gap-2 py-2 border-b border-border/50">
-                  <span className="text-muted-foreground col-span-1">File Name</span>
-                  <span className="font-medium col-span-2 text-right truncate" title={manageItem.name}>{manageItem.name}</span>
+
+                <div className="flex flex-col gap-2 pt-2">
+                  <div className="flex gap-2 w-full">
+                    {manageItem.data.url ? (
+                      <Button variant="outline" className="flex-1" asChild>
+                        <a href={manageItem.data.url} download>
+                          <Download className="mr-2 h-4 w-4" />
+                          Download
+                        </a>
+                      </Button>
+                    ) : (
+                      <Button variant="outline" className="flex-1" disabled>
+                        <Download className="mr-2 h-4 w-4" />
+                        Download
+                      </Button>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    className="w-full text-destructive hover:text-destructive hover:bg-destructive/5"
+                    onClick={() => handleDeleteIso(manageItem.data.id, manageItem.data.name)}
+                  >
+                    Delete ISO
+                  </Button>
                 </div>
-                <div className="grid grid-cols-3 gap-2 py-2 border-b border-border/50">
-                  <span className="text-muted-foreground col-span-1">Size</span>
-                  <span className="font-medium col-span-2 text-right">{formatBytes(manageItem.size)}</span>
+              </div>
+            ) : manageItem?.kind === 'image' ? (
+              <div className="flex-1 flex flex-col">
+                <div className="p-6 space-y-6 overflow-y-auto">
+                  <div className="grid gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="manage-label">Image Name</Label>
+                      <Input
+                        id="manage-label"
+                        value={manageLabel}
+                        onChange={(e) => setManageLabel(e.target.value)}
+                        placeholder="e.g. Ubuntu 22.04"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="manage-os-type">OS Type</Label>
+                      <Input
+                        id="manage-os-type"
+                        value={manageOsType}
+                        onChange={(e) => setManageOsType(e.target.value)}
+                        placeholder="e.g. ubuntu"
+                      />
+                    </div>
+
+                    <div className="rounded-lg border p-4 bg-muted/20 space-y-4">
+                      <div className="flex gap-2 items-end">
+                        <div className="flex-1 space-y-2">
+                          <Label>Kernel Path</Label>
+                          <Input
+                            value={manageKernelPath}
+                            onChange={(e) => setManageKernelPath(e.target.value)}
+                            placeholder="/iso/.../vmlinuz"
+                            className="font-mono text-xs"
+                          />
+                        </div>
+                        <Button
+                          variant="outline"
+                          onClick={() => openExtractedBrowser('manage')}
+                          disabled={!manageCanBrowse}
+                        >
+                          Browse
+                        </Button>
+                      </div>
+                      <div className="flex gap-2 items-end">
+                        <div className="flex-1 space-y-2">
+                          <Label>Initrd Path</Label>
+                          <Input
+                            value={manageInitrdPath}
+                            onChange={(e) => setManageInitrdPath(e.target.value)}
+                            placeholder="/iso/.../initrd"
+                            className="font-mono text-xs"
+                          />
+                        </div>
+                        <Button
+                          variant="outline"
+                          onClick={() => openExtractedBrowser('manage')}
+                          disabled={!manageCanBrowse}
+                        >
+                          Browse
+                        </Button>
+                      </div>
+                      {!manageCanBrowse && (
+                        <p className="text-xs text-muted-foreground">
+                          File browser is available when the image was created from an ISO.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="manage-boot-args">
+                        Boot Arguments <span className="text-muted-foreground text-xs font-normal">(Optional)</span>
+                      </Label>
+                      <Input
+                        id="manage-boot-args"
+                        value={manageBootArgs}
+                        onChange={(e) => setManageBootArgs(e.target.value)}
+                        placeholder="e.g. ip=dhcp console=ttyS0"
+                        className="font-mono text-xs"
+                      />
+                    </div>
+                  </div>
                 </div>
-                <div className="grid grid-cols-3 gap-2 py-2">
-                  <span className="text-muted-foreground col-span-1">Updated</span>
-                  <span className="font-medium col-span-2 text-right">
-                    {new Date(manageItem.modified_at).toLocaleDateString()}
-                  </span>
+
+                <div className="flex items-center justify-between border-t bg-background/95 px-6 py-4">
+                  <Button
+                    variant="ghost"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/5"
+                    onClick={() => handleDeleteImage(manageItem.data.id, manageItem.data.label)}
+                  >
+                    Delete Image Entry
+                  </Button>
+                  <div className="flex gap-2">
+                    <Button variant="ghost" onClick={() => setManageOpen(false)}>
+                      Close
+                    </Button>
+                    <Button
+                      onClick={handleUpdateImageEntry}
+                      disabled={manageSaving || !manageLabel.trim() || !manageKernelPath.trim() || !manageInitrdPath.trim()}
+                    >
+                      {manageSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Save Changes
+                    </Button>
+                  </div>
                 </div>
               </div>
             ) : null}
-            
-            <div className="flex flex-col gap-2 pt-2">
-              <div className="flex gap-2 w-full">
-                 {manageItem?.url ? (
-                  <Button variant="outline" className="flex-1" asChild>
-                    <a href={manageItem.url} download>
-                      <Download className="mr-2 h-4 w-4" />
-                      Download
-                    </a>
-                  </Button>
-                ) : (
-                  <Button variant="outline" className="flex-1" disabled>
-                    <Download className="mr-2 h-4 w-4" />
-                    Download
-                  </Button>
-                )}
-                
-                {manageItem && !manageItem.entry && manageItem.id.toLowerCase().endsWith('.iso') && (
-                  <Button variant="secondary" className="flex-1" onClick={() => openAttachFor(manageItem)}>
-                    Attach Boot Files
-                  </Button>
-                )}
-              </div>
-              
-              {manageItem && (
-                <Button
-                  variant="ghost"
-                  className="w-full text-destructive hover:text-destructive hover:bg-destructive/5"
-                  onClick={() => handleDeleteIso(manageItem.id, manageItem.entry?.label || manageItem.name)}
-                >
-                  Delete Image
-                </Button>
-              )}
-            </div>
-            </div>
           </DialogContent>
         </Dialog>
         <Dialog
           open={extractedBrowserOpen}
           onOpenChange={(open) => setExtractedBrowserOpen(open)}
         >
-          <DialogContent className="w-[1000px] max-w-[95vw] h-[650px] gap-0 p-0 overflow-hidden outline-none duration-200 sm:rounded-xl flex flex-col">
+          <DialogContent className="w-[95vw] max-w-6xl h-[85vh] max-h-[44rem] gap-0 p-0 overflow-hidden outline-none duration-200 sm:rounded-xl flex flex-col">
             <div className="flex items-center justify-between px-6 py-4 border-b bg-background/95 backdrop-blur z-10 shrink-0">
               <div className="space-y-1">
                 <DialogTitle className="text-lg font-medium tracking-tight">File Explorer</DialogTitle>
@@ -1202,7 +1483,13 @@ export function IsoManager() {
                                    size="sm" 
                                    variant="ghost" 
                                    className="h-7 text-xs hover:bg-primary/10 hover:text-primary"
-                                   onClick={() => { setExtractedKernelPath(fullPath); }}
+                                   onClick={() => {
+                                     if (browserContext === 'manage') {
+                                       setManageKernelPath(fullPath);
+                                     } else {
+                                       setExtractedKernelPath(fullPath);
+                                     }
+                                   }}
                                  >
                                    Set Kernel
                                  </Button>
@@ -1210,7 +1497,13 @@ export function IsoManager() {
                                    size="sm" 
                                    variant="ghost" 
                                    className="h-7 text-xs hover:bg-primary/10 hover:text-primary"
-                                   onClick={() => { setExtractedInitrdPath(fullPath); }}
+                                   onClick={() => {
+                                     if (browserContext === 'manage') {
+                                       setManageInitrdPath(fullPath);
+                                     } else {
+                                       setExtractedInitrdPath(fullPath);
+                                     }
+                                   }}
                                  >
                                    Set Initrd
                                  </Button>
@@ -1237,7 +1530,7 @@ export function IsoManager() {
         {isoMessage && (
           <div className="text-sm text-muted-foreground mb-4">{isoMessage}</div>
         )}
-        {isoLoading ? (
+        {(activeTab === 'images' ? imagesLoading : isoLoading) ? (
           <div className="text-center py-8 text-muted-foreground">Loading...</div>
         ) : (activeTab === 'images' ? imageItems.length === 0 : isoItems.length === 0) ? (
           <div className="flex flex-col items-center justify-center py-16 px-4">
@@ -1249,21 +1542,30 @@ export function IsoManager() {
             </h3>
             <p className="text-muted-foreground text-center max-w-md mb-6">
               {activeTab === 'images'
-                ? 'Upload images to populate your PXE menu.'
-                : 'Upload or download ISOs to see them here.'}
+                ? 'Create images from ISO uploads, direct downloads, or manual boot files.'
+                : 'Upload or download ISO files to see them here.'}
             </p>
             <Button onClick={() => setUploadOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
               Add Image
             </Button>
           </div>
+        ) : activeTab === 'images' ? (
+          <DataTable
+            columns={imageColumns}
+            data={imageItems}
+            searchKey="label"
+            searchPlaceholder="Search by image label..."
+            onRowClick={openManageImage}
+            rowClassName={() => 'cursor-pointer'}
+          />
         ) : (
           <DataTable
-            columns={columns}
-            data={activeTab === 'images' ? imageItems : isoItems}
+            columns={isoColumns}
+            data={isoItems}
             searchKey="name"
-            searchPlaceholder={activeTab === 'images' ? 'Search by image name...' : 'Search by ISO name...'}
-            onRowClick={openManage}
+            searchPlaceholder="Search by ISO name..."
+            onRowClick={openManageIso}
             rowClassName={(row) => row.pending ? 'opacity-60 cursor-pointer' : 'cursor-pointer'}
           />
         )}

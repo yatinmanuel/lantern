@@ -98,35 +98,28 @@ isoRoutes.get('/', requireAuth, requirePermission('config.view'), async (_req: A
 
     const isoEntries = await IsoModel.getAll();
     const entryMap = new Map(isoEntries.map(entry => [entry.iso_name, entry]));
-    const isoNames = new Set(files.map(file => file.name));
     const baseUrl = await getBaseUrl();
 
     const fileItems = files
       .filter(file => file.name.toLowerCase().endsWith('.iso'))
       .map(file => {
         const entry = entryMap.get(file.name) || null;
+        const baseName = file.name.replace(/\.iso$/i, '');
+        const destDir = path.join(isoDir, baseName);
+        const extractedMarker = path.join(destDir, '.lantern-extracted');
+        const extracted = fs.existsSync(extractedMarker) || fs.existsSync(destDir);
         return {
           id: file.name,
-          name: entry?.label || file.name,
+          name: file.name,
           size: file.size,
           modified_at: file.modified_at,
           url: `${baseUrl}/iso/${encodeURIComponent(file.name)}`,
+          extracted,
           entry,
         };
       });
 
-    const manualItems = isoEntries
-      .filter(entry => !isoNames.has(entry.iso_name))
-      .map(entry => ({
-        id: entry.iso_name,
-        name: entry.label || entry.iso_name,
-        size: 0,
-        modified_at: entry.created_at || new Date().toISOString(),
-        url: null,
-        entry,
-      }));
-
-    const items = [...fileItems, ...manualItems].sort((a, b) =>
+    const items = fileItems.sort((a, b) =>
       b.modified_at.localeCompare(a.modified_at)
     );
 
@@ -234,24 +227,22 @@ isoRoutes.post('/', requireAuth, requirePermission('config.edit'), (req: AuthReq
     const label = typeof (req.body as any)?.label === 'string' ? (req.body as any).label.trim() : '';
 
     try {
-      if (!autoExtract) {
-        return res.status(201).json({ success: true, file: file.filename });
-      }
       const { source, created_by, meta } = buildJobMeta(req);
       const job = await enqueueJob({
-        type: 'images.extract',
+        type: 'images.add',
         category: 'images',
-        message: `Import image ${file.filename}`,
+        message: `Add image ${file.filename}`,
         source,
         created_by,
         payload: {
           filePath: file.path,
           fileName: file.filename,
           size: file.size,
+          auto_extract: autoExtract,
           label: label || undefined,
           meta,
         },
-        target_type: 'image',
+        target_type: 'iso',
         target_id: file.filename,
       });
 
@@ -363,17 +354,23 @@ isoRoutes.post('/remote', requireAuth, requirePermission('config.edit'), async (
     if (existingEntry) {
       return res.status(409).json({ error: 'Image already exists' });
     }
-    const extractJob = await enqueueJob({
-      type: 'images.extract',
+    const addJob = await enqueueJob({
+      type: 'images.add',
       category: 'images',
-      message: `Extract image ${safeName}`,
+      message: `Add image ${safeName}`,
       source,
       created_by,
-      payload: { filePath: targetPath, fileName: safeName, label: label || undefined, meta },
-      target_type: 'image',
+      payload: {
+        filePath: targetPath,
+        fileName: safeName,
+        auto_extract: autoExtract,
+        label: label || undefined,
+        meta,
+      },
+      target_type: 'iso',
       target_id: safeName,
     });
-    return res.status(202).json({ success: true, jobId: extractJob.id, job: extractJob });
+    return res.status(202).json({ success: true, jobId: addJob.id, job: addJob });
   }
 
   const downloadJob = await enqueueJob({
@@ -383,7 +380,7 @@ isoRoutes.post('/remote', requireAuth, requirePermission('config.edit'), async (
     source,
     created_by,
     payload: { url, safeName, auto_extract: autoExtract, label: label || undefined, meta },
-    target_type: 'image',
+    target_type: 'iso',
     target_id: safeName,
   });
 

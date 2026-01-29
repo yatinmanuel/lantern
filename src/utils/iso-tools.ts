@@ -379,17 +379,19 @@ export function detectIsoEntry(isoName: string, destDir: string, baseUrl: string
   return null;
 }
 
-export async function processIsoFile(
-  filePath: string,
+export async function buildImageFromExtracted(
+  filePathOrName: string,
   options?: { label?: string }
-): Promise<{ entry: Awaited<ReturnType<typeof IsoModel.upsert>> }>{
+): Promise<{ entry: Awaited<ReturnType<typeof IsoModel.upsert>> }> {
   const isoDir = await getIsoDir();
-  const fileName = path.basename(filePath);
+  const fileName = path.basename(filePathOrName);
   const baseName = fileName.replace(/\.iso$/i, '');
   const destDir = path.join(isoDir, baseName);
 
-  await fsp.rm(destDir, { recursive: true, force: true });
-  await extractIso(filePath, destDir);
+  if (!fs.existsSync(destDir)) {
+    throw new Error('Extracted ISO not found. Run iso.extract first.');
+  }
+
   const baseUrl = await getBaseUrl();
   const entry = detectIsoEntry(fileName, destDir, baseUrl);
   if (!entry) {
@@ -401,6 +403,20 @@ export async function processIsoFile(
   const stored = await IsoModel.upsert(entry);
   await generateIpxeMenu();
   return { entry: stored };
+}
+
+export async function processIsoFile(
+  filePath: string,
+  options?: { label?: string }
+): Promise<{ entry: Awaited<ReturnType<typeof IsoModel.upsert>> }>{
+  const isoDir = await getIsoDir();
+  const fileName = path.basename(filePath);
+  const baseName = fileName.replace(/\.iso$/i, '');
+  const destDir = path.join(isoDir, baseName);
+
+  await fsp.rm(destDir, { recursive: true, force: true });
+  await extractIso(filePath, destDir);
+  return buildImageFromExtracted(fileName, options);
 }
 
 export async function scanIsoDirectory(): Promise<{ name: string; status: string; error?: string }[]> {
