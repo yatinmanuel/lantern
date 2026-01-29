@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Download, Folder, HardDrive, Loader2, Plus, Trash2 } from 'lucide-react';
+import { Download, Folder, File as FileIcon, HardDrive, Loader2, Plus, Trash2, Upload } from 'lucide-react';
+
+
 import { ColumnDef } from '@tanstack/react-table';
 import { isoApi, IsoFile, RemoteImageMeta, ExtractedFile } from '@/lib/iso-api';
 import { Job, jobsApi } from '@/lib/jobs-api';
@@ -598,6 +600,7 @@ export function IsoManager() {
   }, [extractedIsoName]);
 
   useEffect(() => {
+    // Existing job stream logic
     const source = jobsApi.stream((job) => {
       if (job.category !== 'images') return;
       if (job.status === 'queued' || job.status === 'running') {
@@ -625,6 +628,61 @@ export function IsoManager() {
     return () => source.close();
   }, []);
 
+  // Helper for file input visual
+  const FileInputWithPreview = ({ 
+    file, 
+    onSelect, 
+    accept, 
+    label 
+  }: { 
+    file: File | null; 
+    onSelect: (f: File | null) => void; 
+    accept?: string;
+    label: string;
+  }) => (
+    <div className="relative group cursor-pointer">
+      <div className={`
+        relative flex flex-col items-center justify-center rounded-lg border-2 border-dashed 
+        transition-all duration-200 ease-in-out
+        ${file 
+          ? 'border-primary/50 bg-primary/5' 
+          : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50'
+        }
+        h-32 w-full
+      `}>
+        <input
+          type="file"
+          className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+          accept={accept}
+          onChange={(e) => onSelect(e.target.files?.[0] || null)}
+        />
+        <div className="flex flex-col items-center justify-center space-y-2 text-center">
+          {file ? (
+            <>
+              <div className="rounded-full bg-background p-2 shadow-sm ring-1 ring-border">
+                <FileIcon className="h-5 w-5 text-primary" />
+              </div>
+              <div className="space-y-0.5">
+                <p className="text-sm font-medium text-foreground">{file.name}</p>
+                <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="rounded-full bg-muted p-2 group-hover:bg-background transition-colors">
+                <Upload className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
+              </div>
+              <div className="space-y-0.5">
+                <p className="text-sm font-medium text-foreground">{label}</p>
+                <p className="text-xs text-muted-foreground">Click or drag file here</p>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -650,177 +708,162 @@ export function IsoManager() {
               Add Image
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-4xl p-0 overflow-hidden">
-            <div className="border-b bg-muted/30 px-6 py-5">
+          <DialogContent className="max-w-3xl gap-0 p-0 overflow-hidden outline-none duration-200 sm:rounded-xl">
+            <div className="px-6 py-6 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
               <DialogHeader>
-                <DialogTitle>Add Image</DialogTitle>
-                <DialogDescription>
-                  Choose how you want to add a boot image, then fill in the details.
+                <DialogTitle className="text-xl font-medium">Add Image</DialogTitle>
+                <DialogDescription className="text-muted-foreground mt-1.5">
+                  Import a boot image from a local file or remote URL.
                 </DialogDescription>
               </DialogHeader>
             </div>
-            <div className="px-6 py-5">
-              <Tabs
-                value={uploadMode}
-                onValueChange={(value) => setUploadMode(value as UploadMode)}
-                className="flex flex-col gap-5"
-              >
-                <TabsList className="grid w-full grid-cols-3 gap-3 bg-transparent p-0">
-                  <TabsTrigger
-                    value="iso"
-                    className="h-auto flex-col items-start gap-1 rounded-xl border bg-muted/20 px-4 py-3 text-left data-[state=active]:bg-background data-[state=active]:shadow"
-                  >
-                    <span className="text-sm font-semibold">ISO Upload</span>
-                    <span className="text-xs text-muted-foreground">Upload an ISO from your machine.</span>
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="manual"
-                    className="h-auto flex-col items-start gap-1 rounded-xl border bg-muted/20 px-4 py-3 text-left data-[state=active]:bg-background data-[state=active]:shadow"
-                  >
-                    <span className="text-sm font-semibold">Boot Files</span>
-                    <span className="text-xs text-muted-foreground">Provide kernel + initrd manually.</span>
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="url"
-                    className="h-auto flex-col items-start gap-1 rounded-xl border bg-muted/20 px-4 py-3 text-left data-[state=active]:bg-background data-[state=active]:shadow"
-                  >
-                    <span className="text-sm font-semibold">Direct URL</span>
-                    <span className="text-xs text-muted-foreground">Download an ISO from a URL.</span>
-                  </TabsTrigger>
-                </TabsList>
-                <div className="min-h-[300px] max-h-[55vh] overflow-y-auto pr-1">
-                  <TabsContent value="iso" className="mt-0 space-y-4">
-                    <div className="grid gap-4 lg:grid-cols-5">
-                      <div className="lg:col-span-3 space-y-3 rounded-xl border bg-muted/10 p-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="iso-upload">ISO File</Label>
-                          <Input
-                            key={uploadInputKey}
-                            id="iso-upload"
-                            type="file"
-                            accept=".iso"
-                            onChange={(e) => setIsoFile(e.target.files?.[0] || null)}
-                          />
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          Only .iso files are accepted.
-                        </div>
-                        <div className="rounded-lg border bg-background px-3 py-2 text-sm">
-                          {isoFile ? (
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-medium text-foreground">{isoFile.name}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {(isoFile.size / (1024 * 1024)).toFixed(1)} MB
-                              </span>
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground">No file selected yet.</span>
-                          )}
+            
+            <div className="flex bg-muted/30 min-h-[400px]">
+              {/* Sidebar Tabs */}
+              <div className="w-[200px] border-r bg-background/50 p-4 space-y-1">
+                <button
+                  onClick={() => setUploadMode('iso')}
+                  className={`w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    uploadMode === 'iso' 
+                      ? 'bg-secondary text-foreground' 
+                      : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                  }`}
+                >
+                  Upload ISO
+                </button>
+                <button
+                  onClick={() => setUploadMode('manual')}
+                  className={`w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    uploadMode === 'manual' 
+                      ? 'bg-secondary text-foreground' 
+                      : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                  }`}
+                >
+                  Boot Files
+                </button>
+                <button
+                  onClick={() => setUploadMode('url')}
+                  className={`w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    uploadMode === 'url' 
+                      ? 'bg-secondary text-foreground' 
+                      : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                  }`}
+                >
+                  Direct URL
+                </button>
+              </div>
+
+              {/* Main Content */}
+              <div className="flex-1 p-6 bg-background">
+                {uploadMode === 'iso' && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>ISO File</Label>
+                        <FileInputWithPreview 
+                          file={isoFile} 
+                          onSelect={setIsoFile} 
+                          accept=".iso" 
+                          label="Upload ISO"
+                        />
+                      </div>
+
+                      <div className="flex items-start gap-3 rounded-lg border p-4 bg-muted/20">
+                        <Checkbox
+                          id="auto-extract"
+                          className="mt-1"
+                          checked={autoExtract}
+                          onCheckedChange={(value) => setAutoExtract(value === true)}
+                        />
+                        <div className="grid gap-1.5">
+                          <Label htmlFor="auto-extract" className="font-medium">
+                            Auto-extract contents
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                            Automatically extract kernel and initrd to generate an iPXE entry.
+                          </p>
                         </div>
                       </div>
-                      <div className="lg:col-span-2 space-y-3 rounded-xl border bg-muted/10 p-4">
-                        <div className="flex items-center gap-2">
-                          <Checkbox
-                            id="auto-extract"
-                            checked={autoExtract}
-                            onCheckedChange={(value) => setAutoExtract(value === true)}
+
+                      {autoExtract && (
+                        <div className="space-y-2">
+                          <Label htmlFor="auto-label">Image Label <span className="text-muted-foreground text-xs font-normal">(Optional)</span></Label>
+                          <Input
+                            id="auto-label"
+                            placeholder="e.g. Ubuntu 22.04"
+                            value={autoLabel}
+                            onChange={(e) => setAutoLabel(e.target.value)}
+                            className="bg-background"
                           />
-                          <Label htmlFor="auto-extract" className="text-sm">
-                            Auto extract and generate iPXE entry
-                          </Label>
                         </div>
-                        {autoExtract && (
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {uploadMode === 'manual' && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                    {/* Sub-tabs for manual mode */}
+                    <div className="flex rounded-lg bg-muted p-1 w-fit mb-4">
+                       <button
+                         type="button"
+                         onClick={() => setManualMode('upload')}
+                         className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                           manualMode === 'upload' 
+                             ? 'bg-background shadow-sm text-foreground' 
+                             : 'text-muted-foreground hover:text-foreground'
+                         }`}
+                       >
+                         Upload Files
+                       </button>
+                       <button
+                         type="button"
+                         onClick={() => setManualMode('extracted')}
+                         className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                           manualMode === 'extracted' 
+                             ? 'bg-background shadow-sm text-foreground' 
+                             : 'text-muted-foreground hover:text-foreground'
+                         }`}
+                       >
+                         Use Extracted
+                       </button>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="manual-label">Image Label</Label>
+                        <Input
+                          id="manual-label"
+                          placeholder="e.g. Ubuntu 22.04"
+                          value={manualLabel}
+                          onChange={(e) => setManualLabel(e.target.value)}
+                        />
+                      </div>
+
+                      {manualMode === 'upload' ? (
+                        <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-2">
-                            <Label htmlFor="auto-label">Image Name (optional)</Label>
-                            <Input
-                              id="auto-label"
-                              placeholder="ubuntu-22.04"
-                              value={autoLabel}
-                              onChange={(e) => setAutoLabel(e.target.value)}
+                            <Label>Kernel (vmlinuz)</Label>
+                            <FileInputWithPreview 
+                              file={manualKernel} 
+                              onSelect={setManualKernel}
+                              label="Upload Kernel" 
                             />
                           </div>
-                        )}
-                        <div className="text-xs text-muted-foreground">
-                          Extracted images will appear in the Images list.
-                        </div>
-                      </div>
-                    </div>
-                  </TabsContent>
-                  <TabsContent value="manual" className="mt-0 space-y-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold">Boot Files</div>
-                        <div className="text-xs text-muted-foreground">
-                          Provide kernel + initrd directly, or pick from an extracted ISO.
-                        </div>
-                      </div>
-                      <div className="inline-flex rounded-lg border bg-muted/20 p-1">
-                        <Button
-                          type="button"
-                          variant={manualMode === 'upload' ? 'default' : 'outline'}
-                          size="sm"
-                          onClick={() => setManualMode('upload')}
-                        >
-                          Upload files
-                        </Button>
-                        <Button
-                          type="button"
-                          variant={manualMode === 'extracted' ? 'default' : 'outline'}
-                          size="sm"
-                          onClick={() => setManualMode('extracted')}
-                        >
-                          Use extracted ISO
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="grid gap-4 lg:grid-cols-3">
-                      <div className="space-y-3 rounded-xl border bg-muted/10 p-4 lg:col-span-1">
-                        <div className="space-y-2">
-                          <Label htmlFor="manual-label">Image Label</Label>
-                          <Input
-                            id="manual-label"
-                            placeholder="ubuntu-22.04"
-                            value={manualLabel}
-                            onChange={(e) => setManualLabel(e.target.value)}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="manual-args">Kernel Args (optional)</Label>
-                          <Input
-                            id="manual-args"
-                            placeholder="ip=dhcp"
-                            value={manualArgs}
-                            onChange={(e) => setManualArgs(e.target.value)}
-                          />
-                        </div>
-                      </div>
-                      <div className="space-y-4 rounded-xl border bg-muted/10 p-4 lg:col-span-2">
-                        {manualMode === 'upload' ? (
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <div className="space-y-2">
-                              <Label htmlFor="manual-kernel">vmlinuz</Label>
-                              <Input
-                                key={manualInputKey}
-                                id="manual-kernel"
-                                type="file"
-                                onChange={(e) => setManualKernel(e.target.files?.[0] || null)}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor="manual-initrd">initramfs</Label>
-                              <Input
-                                key={`${manualInputKey}-initrd`}
-                                id="manual-initrd"
-                                type="file"
-                                onChange={(e) => setManualInitrd(e.target.files?.[0] || null)}
-                              />
-                            </div>
+                          <div className="space-y-2">
+                            <Label>Initrd (initramfs)</Label>
+                            <FileInputWithPreview 
+                              file={manualInitrd} 
+                              onSelect={setManualInitrd}
+                              label="Upload Initrd" 
+                            />
                           </div>
-                        ) : (
-                          <div className="space-y-4">
-                            <div className="space-y-2">
-                              <Label>Source ISO</Label>
-                              <select
+                        </div>
+                      ) : (
+                        <div className="space-y-4 rounded-lg border p-4 bg-muted/20">
+                          <div className="space-y-2">
+                            <Label>Source ISO</Label>
+                            <select
                                 value={extractedIsoName}
                                 onChange={(e) => {
                                   setExtractedIsoName(e.target.value);
@@ -828,208 +871,143 @@ export function IsoManager() {
                                     setManualLabel(e.target.value.replace(/\.iso$/i, ''));
                                   }
                                 }}
-                                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                               >
-                                <option value="">Select an ISO...</option>
-                                {isoFiles
-                                  .filter((file) => file.id.toLowerCase().endsWith('.iso'))
-                                  .map((file) => (
-                                    <option key={file.id} value={file.id}>
-                                      {file.name}
-                                    </option>
-                                  ))}
-                              </select>
-                            </div>
-                            <div className="grid gap-3 md:grid-cols-2">
-                              <div className="space-y-2">
-                                <Label htmlFor="extracted-kernel">Kernel path</Label>
-                                <Input
-                                  id="extracted-kernel"
-                                  list="kernel-paths"
-                                  placeholder={extractedLoading ? 'Loading...' : '/iso/.../vmlinuz'}
-                                  value={extractedKernelPath}
-                                  onChange={(e) => setExtractedKernelPath(e.target.value)}
-                                />
-                                <datalist id="kernel-paths">
-                                  {extractedKernelOptions.map((path) => (
-                                    <option key={path} value={path} />
-                                  ))}
-                                </datalist>
-                              </div>
-                              <div className="space-y-2">
-                                <Label htmlFor="extracted-initrd">Initramfs path</Label>
-                                <Input
-                                  id="extracted-initrd"
-                                  list="initrd-paths"
-                                  placeholder={extractedLoading ? 'Loading...' : '/iso/.../initrd'}
-                                  value={extractedInitrdPath}
-                                  onChange={(e) => setExtractedInitrdPath(e.target.value)}
-                                />
-                                <datalist id="initrd-paths">
-                                  {extractedInitrdOptions.map((path) => (
-                                    <option key={path} value={path} />
-                                  ))}
-                                </datalist>
-                              </div>
-                            </div>
-                            <div className="space-y-2">
-                              <Label>Extracted files</Label>
-                              <div className="rounded-lg border bg-muted/20 p-3">
-                                <div className="flex flex-wrap items-center justify-between gap-3">
-                                  <div className="text-xs text-muted-foreground">
-                                    Browse the extracted ISO tree to pick kernel/initrd paths.
-                                  </div>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={openExtractedBrowser}
-                                    disabled={!extractedIsoName || extractedLoading}
-                                  >
-                                    Open file explorer
-                                  </Button>
-                                </div>
-                                <div className="mt-3 grid gap-2 text-xs text-muted-foreground">
-                                  <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <span>Kernel</span>
-                                    <span className="truncate font-mono text-foreground">
-                                      {extractedKernelPath || 'Not selected'}
-                                    </span>
-                                  </div>
-                                  <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <span>Initrd</span>
-                                    <span className="truncate font-mono text-foreground">
-                                      {extractedInitrdPath || 'Not selected'}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
+                              <option value="">Select an ISO...</option>
+                              {isoFiles
+                                .filter((file) => file.id.toLowerCase().endsWith('.iso'))
+                                .map((file) => (
+                                  <option key={file.id} value={file.id}>
+                                    {file.name}
+                                  </option>
+                                ))}
+                            </select>
                           </div>
-                        )}
-                      </div>
-                    </div>
-                  </TabsContent>
-                  <TabsContent value="url" className="mt-0 space-y-4">
-                    <div className="grid gap-4 lg:grid-cols-5">
-                      <div className="lg:col-span-3 space-y-3 rounded-xl border bg-muted/10 p-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="remote-url">Source URL</Label>
-                          <div className="flex flex-wrap gap-2">
-                            <Input
-                              id="remote-url"
-                              placeholder="https://example.com/image.iso"
-                              value={remoteUrl}
-                              onChange={(e) => {
-                                setRemoteUrl(e.target.value);
-                                setRemoteMeta(null);
-                                setRemoteFileName('');
-                                setRemoteFileNameEdited(false);
-                              }}
-                              className="min-w-0 flex-1"
-                            />
-                            <Button
-                              type="button"
-                              onClick={handleQueryRemoteMeta}
-                              disabled={remoteLoading}
-                            >
-                              {remoteLoading ? (
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              ) : null}
-                              Query URL
-                            </Button>
+                          
+                          <div className="grid gap-4">
+                             <div className="flex gap-2 items-end">
+                               <div className="flex-1 space-y-2">
+                                  <Label>Kernel Path</Label>
+                                  <Input value={extractedKernelPath} readOnly placeholder="Select from explorer" />
+                               </div>
+                               <Button variant="outline" onClick={openExtractedBrowser}>Browse</Button>
+                             </div>
+                             <div className="flex-1 space-y-2">
+                                <Label>Initrd Path</Label>
+                                <Input value={extractedInitrdPath} readOnly placeholder="Select from explorer" />
+                             </div>
                           </div>
                         </div>
-                        <div className="space-y-2">
-                          <Label>File name</Label>
+                      )}
+
+                      <div className="space-y-2">
+                        <Label htmlFor="manual-args">Boot Arguments <span className="text-muted-foreground text-xs font-normal">(Optional)</span></Label>
+                        <Input
+                          id="manual-args"
+                          placeholder="e.g. ip=dhcp console=ttyS0"
+                          value={manualArgs}
+                          onChange={(e) => setManualArgs(e.target.value)}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {uploadMode === 'url' && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="remote-url">Source URL</Label>
+                        <div className="flex gap-2">
                           <Input
-                            value={remoteFileName}
-                            placeholder="Query URL to auto-fill"
+                            id="remote-url"
+                            placeholder="https://example.com/image.iso"
+                            value={remoteUrl}
                             onChange={(e) => {
-                              setRemoteFileName(e.target.value);
-                              setRemoteFileNameEdited(true);
+                              setRemoteUrl(e.target.value);
+                              setRemoteMeta(null);
+                              setRemoteFileName('');
+                              setRemoteFileNameEdited(false);
                             }}
                           />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Checkbox
-                            id="remote-auto-extract"
-                            checked={remoteAutoExtract}
-                            onCheckedChange={(value) => setRemoteAutoExtract(value === true)}
-                          />
-                          <Label htmlFor="remote-auto-extract" className="text-sm">
-                            Auto extract and generate iPXE entry
-                          </Label>
-                        </div>
-                        {remoteAutoExtract && (
-                          <div className="space-y-2">
-                            <Label htmlFor="remote-label">Image Name (optional)</Label>
-                            <Input
-                              id="remote-label"
-                              placeholder="ubuntu-22.04"
-                              value={remoteLabel}
-                              onChange={(e) => setRemoteLabel(e.target.value)}
-                            />
-                          </div>
-                        )}
-                      </div>
-                      <div className="lg:col-span-2 space-y-3 rounded-xl border bg-muted/10 p-4">
-                        <div className="text-xs uppercase tracking-widest text-muted-foreground">Metadata</div>
-                        <div className="space-y-2 text-sm">
-                          <div className="flex items-center justify-between">
-                            <span className="text-muted-foreground">File size</span>
-                            <span>{remoteMeta?.size ? formatBytes(remoteMeta.size) : '-'}</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-muted-foreground">MIME type</span>
-                            <span>{remoteMeta?.mimeType || '-'}</span>
-                          </div>
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          Query the URL to populate file details before downloading.
+                          <Button 
+                            variant="secondary"
+                            onClick={handleQueryRemoteMeta}
+                            disabled={remoteLoading || !remoteUrl}
+                          >
+                            {remoteLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Check
+                          </Button>
                         </div>
                       </div>
+
+                      {remoteMeta && (
+                        <div className="rounded-lg border bg-muted/30 p-3 text-sm flex justify-between items-center text-muted-foreground">
+                          <span>{remoteMeta.mimeType}</span>
+                          <span>{formatBytes(remoteMeta.size || 0)}</span>
+                        </div>
+                      )}
+
+                      <div className="space-y-2">
+                        <Label>Save Filename</Label>
+                        <Input
+                           value={remoteFileName}
+                           onChange={(e) => {
+                             setRemoteFileName(e.target.value);
+                             setRemoteFileNameEdited(true);
+                           }}
+                           placeholder="image.iso"
+                        />
+                      </div>
+
+                      <div className="flex items-start gap-3 rounded-lg border p-4 bg-muted/20">
+                         <Checkbox
+                           id="remote-auto-extract"
+                           className="mt-1"
+                           checked={remoteAutoExtract}
+                           onCheckedChange={(value) => setRemoteAutoExtract(value === true)}
+                         />
+                         <div className="grid gap-1.5">
+                           <Label htmlFor="remote-auto-extract" className="font-medium">
+                             Auto-extract contents
+                           </Label>
+                         </div>
+                       </div>
+                       
+                       {remoteAutoExtract && (
+                         <div className="space-y-2">
+                           <Label htmlFor="remote-label">Image Label <span className="text-muted-foreground text-xs font-normal">(Optional)</span></Label>
+                           <Input
+                             id="remote-label"
+                             placeholder="e.g. Ubuntu 22.04"
+                             value={remoteLabel}
+                             onChange={(e) => setRemoteLabel(e.target.value)}
+                           />
+                         </div>
+                       )}
                     </div>
-                  </TabsContent>
-                </div>
-              </Tabs>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-muted/20 px-6 py-4">
-              <div className="text-xs text-muted-foreground">
-                {uploadMode === 'iso'
-                  ? (isoFile ? `Selected: ${isoFile.name}` : 'Select an ISO file to continue.')
-                  : uploadMode === 'manual'
-                    ? (manualMode === 'upload'
-                      ? 'Select kernel and initramfs files to continue.'
-                      : extractedIsoName
-                        ? 'Choose kernel/initrd paths from the extracted ISO.'
-                        : 'Select a source ISO to browse.')
-                    : (remoteUrl ? 'Query the URL or confirm file name before downloading.' : 'Enter a URL to begin.')}
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" onClick={() => setUploadOpen(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleSubmitUpload}
-                  disabled={
-                    isoUploading ||
-                    (uploadMode === 'url' && !remoteUrl.trim()) ||
-                    (uploadMode === 'manual' && manualMode === 'extracted' && extractedLoading)
-                  }
-                >
-                  {isoUploading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Working...
-                    </>
-                  ) : (
-                    <>
-                      {uploadMode === 'iso' ? 'Extract & Add' : 'Add'}
-                    </>
-                  )}
-                </Button>
-              </div>
+
+            <div className="flex items-center justify-between border-t bg-background/95 p-6 backdrop-blur">
+               <div className="text-xs text-muted-foreground">
+                 {isoUploading ? 'Processing request...' : 'Ready to add image.'}
+               </div>
+               <div className="flex gap-2">
+                  <Button variant="ghost" onClick={() => setUploadOpen(false)}>Cancel</Button>
+                  <Button 
+                    onClick={handleSubmitUpload} 
+                    disabled={isoUploading || 
+                      (uploadMode === 'url' && !remoteUrl) || 
+                      (uploadMode === 'manual' && manualMode === 'extracted' && !extractedIsoName)}
+                  >
+                    {isoUploading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {uploadMode === 'iso' ? 'Import Image' : 'Add Entry'}
+                  </Button>
+               </div>
             </div>
           </DialogContent>
           </Dialog>
@@ -1042,74 +1020,87 @@ export function IsoManager() {
             }
           }}
         >
-          <DialogContent className="max-w-xl">
-            <DialogHeader>
-              <DialogTitle>Manage Image</DialogTitle>
-              <DialogDescription>
-                {manageItem?.entry?.label || manageItem?.name || 'Image details'}
-              </DialogDescription>
-            </DialogHeader>
+          <DialogContent className="max-w-md gap-0 p-0 overflow-hidden sm:rounded-xl">
+            <div className="px-6 py-5 border-b bg-background/95 backdrop-blur">
+              <DialogHeader>
+                <DialogTitle className="text-lg font-medium tracking-tight">Manage Image</DialogTitle>
+                <DialogDescription className="text-muted-foreground mt-1">
+                  {manageItem?.entry?.label || manageItem?.name || 'Image details'}
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+            
+            <div className="p-6 space-y-6">
             {manageItem ? (
-              <div className="space-y-3 text-sm">
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-muted-foreground">Type</span>
-                  <span className="font-medium">
+              <div className="space-y-4 text-sm">
+                <div className="grid grid-cols-3 gap-2 py-2 border-b border-border/50">
+                  <span className="text-muted-foreground col-span-1">Type</span>
+                  <span className="font-medium col-span-2 text-right">
                     {manageItem.id.startsWith('manual:') ? 'Manual entry' : 'ISO file'}
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-muted-foreground">Status</span>
-                  <span className="font-medium">
+                <div className="grid grid-cols-3 gap-2 py-2 border-b border-border/50">
+                  <span className="text-muted-foreground col-span-1">Status</span>
+                  <span className="font-medium col-span-2 text-right">
                     {manageItem.pending
-                      ? 'Processing'
+                      ? <span className="inline-flex items-center text-yellow-600 dark:text-yellow-400">
+                          <Loader2 className="mr-1.5 h-3 w-3 animate-spin"/> Processing
+                        </span>
                       : manageItem.entry
-                        ? 'Imported'
+                        ? <span className="text-green-600 dark:text-green-400">Imported</span>
                         : 'Not imported'}
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-muted-foreground">File</span>
-                  <span className="font-medium">{manageItem.name}</span>
+                <div className="grid grid-cols-3 gap-2 py-2 border-b border-border/50">
+                  <span className="text-muted-foreground col-span-1">File Name</span>
+                  <span className="font-medium col-span-2 text-right truncate" title={manageItem.name}>{manageItem.name}</span>
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-muted-foreground">Size</span>
-                  <span className="font-medium">{formatBytes(manageItem.size)}</span>
+                <div className="grid grid-cols-3 gap-2 py-2 border-b border-border/50">
+                  <span className="text-muted-foreground col-span-1">Size</span>
+                  <span className="font-medium col-span-2 text-right">{formatBytes(manageItem.size)}</span>
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-muted-foreground">Updated</span>
-                  <span className="font-medium">
-                    {new Date(manageItem.modified_at).toLocaleString()}
+                <div className="grid grid-cols-3 gap-2 py-2">
+                  <span className="text-muted-foreground col-span-1">Updated</span>
+                  <span className="font-medium col-span-2 text-right">
+                    {new Date(manageItem.modified_at).toLocaleDateString()}
                   </span>
                 </div>
               </div>
             ) : null}
-            <div className="flex flex-wrap justify-end gap-2 pt-2">
-              {manageItem?.url ? (
-                <Button variant="outline" asChild>
-                  <a href={manageItem.url} download>
+            
+            <div className="flex flex-col gap-2 pt-2">
+              <div className="flex gap-2 w-full">
+                 {manageItem?.url ? (
+                  <Button variant="outline" className="flex-1" asChild>
+                    <a href={manageItem.url} download>
+                      <Download className="mr-2 h-4 w-4" />
+                      Download
+                    </a>
+                  </Button>
+                ) : (
+                  <Button variant="outline" className="flex-1" disabled>
                     <Download className="mr-2 h-4 w-4" />
                     Download
-                  </a>
-                </Button>
-              ) : (
-                <Button variant="outline" disabled>
-                  <Download className="mr-2 h-4 w-4" />
-                  Download
-                </Button>
-              )}
-              {manageItem && !manageItem.entry && manageItem.id.toLowerCase().endsWith('.iso') ? (
-                <Button variant="outline" onClick={() => openAttachFor(manageItem)}>
-                  Attach boot files
-                </Button>
-              ) : null}
-              {manageItem ? (
+                  </Button>
+                )}
+                
+                {manageItem && !manageItem.entry && manageItem.id.toLowerCase().endsWith('.iso') && (
+                  <Button variant="secondary" className="flex-1" onClick={() => openAttachFor(manageItem)}>
+                    Attach Boot Files
+                  </Button>
+                )}
+              </div>
+              
+              {manageItem && (
                 <Button
-                  variant="destructive"
+                  variant="ghost"
+                  className="w-full text-destructive hover:text-destructive hover:bg-destructive/5"
                   onClick={() => handleDeleteIso(manageItem.id, manageItem.entry?.label || manageItem.name)}
                 >
-                  Delete
+                  Delete Image
                 </Button>
-              ) : null}
+              )}
+            </div>
             </div>
           </DialogContent>
         </Dialog>
@@ -1117,168 +1108,130 @@ export function IsoManager() {
           open={extractedBrowserOpen}
           onOpenChange={(open) => setExtractedBrowserOpen(open)}
         >
-          <DialogContent className="w-[900px] max-w-[92vw] h-[560px] max-h-[85vh] p-0 overflow-hidden">
-            <div className="flex h-full flex-col">
-              <div className="border-b bg-muted/40 px-6 py-4">
-                <DialogHeader>
-                  <DialogTitle>Extracted Files</DialogTitle>
-                  <DialogDescription>
-                    Browse extracted ISO contents and pick kernel/initrd paths.
-                  </DialogDescription>
-                </DialogHeader>
-              </div>
-              <div className="flex-1 px-6 py-4 space-y-4 overflow-hidden">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setExtractedDir('')}
-                      disabled={!extractedDir}
-                    >
-                      Root
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        if (!extractedDir) return;
-                        const parts = extractedDir.split('/').filter(Boolean);
-                        parts.pop();
-                        setExtractedDir(parts.join('/'));
-                      }}
-                      disabled={!extractedDir}
-                    >
-                      Up
-                    </Button>
-                  </div>
-                  <Input
-                    value={extractedFilter}
-                    onChange={(e) => setExtractedFilter(e.target.value)}
-                    placeholder="Search current folder..."
-                    className="h-9 max-w-sm"
-                  />
-                </div>
-                <div className="flex min-h-0 flex-1 flex-col rounded-lg border bg-background shadow-sm">
-                  <div className="flex items-center gap-2 border-b bg-muted/40 px-4 py-2 text-xs uppercase tracking-widest text-muted-foreground">
-                    <span className="text-[10px]">Path</span>
-                    <div className="flex flex-wrap items-center gap-1 font-mono text-[11px] normal-case tracking-normal">
-                      <button
-                        type="button"
-                        className="truncate hover:underline"
-                        onClick={() => setExtractedDir('')}
-                      >
-                        {extractedRoot}
-                      </button>
-                      {extractedDir
-                        .split('/')
-                        .filter(Boolean)
-                        .map((segment, index, parts) => {
-                          const nextPath = parts.slice(0, index + 1).join('/');
-                          return (
-                            <span key={nextPath} className="flex items-center gap-1">
-                              <span className="text-muted-foreground">/</span>
-                              <button
-                                type="button"
-                                className="truncate hover:underline"
-                                onClick={() => setExtractedDir(nextPath)}
-                              >
-                                {segment}
-                              </button>
-                            </span>
-                          );
-                        })}
-                    </div>
-                  </div>
-                  <div className="min-h-0 flex-1 overflow-y-auto">
-                    {extractedLoading ? (
-                      <div className="p-4 text-sm text-muted-foreground">Loading extracted files...</div>
-                    ) : extractedBrowserEntries.length > 0 ? (
-                      <div className="divide-y">
-                        {extractedBrowserEntries.map((entry) => {
-                          const fullPath = `${extractedRoot}/${entry.path}`;
-                          return (
-                            <div
-                              key={entry.path}
-                              className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm hover:bg-muted/40"
-                            >
-                              <button
-                                type="button"
-                                className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                                onClick={() => {
-                                  if (entry.type === 'dir') {
-                                    setExtractedDir(entry.path);
-                                  }
-                                }}
-                              >
-                                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                                  {entry.type === 'dir' ? (
-                                    <Folder className="h-4 w-4" />
-                                  ) : (
-                                    <span className="text-[10px] font-semibold">FILE</span>
-                                  )}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="truncate font-mono text-sm">{entry.name}</div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {entry.type === 'dir' ? 'Folder' : formatBytes(entry.size ?? 0)}
-                                  </div>
-                                </div>
-                              </button>
-                              {entry.type === 'file' ? (
-                                <div className="flex flex-wrap gap-2">
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => setExtractedKernelPath(fullPath)}
-                                  >
-                                    Use as kernel
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => setExtractedInitrdPath(fullPath)}
-                                  >
-                                    Use as initrd
-                                  </Button>
-                                </div>
-                              ) : (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => setExtractedDir(entry.path)}
-                                >
-                                  Open
-                                </Button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="p-4 text-sm text-muted-foreground">
-                        No files in this folder.
-                      </div>
-                    )}
-                  </div>
+          <DialogContent className="w-[1000px] max-w-[95vw] h-[650px] gap-0 p-0 overflow-hidden outline-none duration-200 sm:rounded-xl flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b bg-background/95 backdrop-blur z-10 shrink-0">
+              <div className="space-y-1">
+                <DialogTitle className="text-lg font-medium tracking-tight">File Explorer</DialogTitle>
+                <div className="flex items-center text-sm text-muted-foreground gap-2">
+                   <div className="flex items-center">
+                     <button onClick={() => setExtractedDir('')} className="hover:text-foreground transition-colors hover:underline">
+                       {extractedRoot.replace(/^\/iso\//, '') || 'root'}
+                     </button>
+                     {extractedDir.split('/').filter(Boolean).map((part, i, arr) => {
+                       const path = arr.slice(0, i + 1).join('/');
+                       return (
+                         <span key={path} className="flex items-center">
+                           <span className="mx-1.5 opacity-50">/</span>
+                           <button 
+                             onClick={() => setExtractedDir(path)}
+                             className="hover:text-foreground transition-colors hover:underline"
+                           >
+                             {part}
+                           </button>
+                         </span>
+                       );
+                     })}
+                   </div>
                 </div>
               </div>
-              <div className="flex items-center justify-between gap-2 border-t bg-muted/30 px-6 py-3">
-                <div className="text-xs text-muted-foreground">
-                  Tip: locate vmlinuz and initrd/initramfs in /boot or /casper.
-                </div>
-                <Button variant="outline" onClick={() => setExtractedBrowserOpen(false)}>
-                  Close
-                </Button>
+              <div className="flex items-center gap-2">
+                 <div className="relative">
+                   <Input
+                     value={extractedFilter}
+                     onChange={(e) => setExtractedFilter(e.target.value)}
+                     placeholder="Search files..."
+                     className="h-8 w-[200px] bg-muted/50"
+                   />
+                 </div>
               </div>
             </div>
+
+            <div className="flex-1 overflow-auto bg-muted/5 p-4">
+              <div className="rounded-lg border bg-background shadow-sm overflow-hidden">
+                <div className="grid grid-cols-12 gap-4 px-4 py-2 border-b bg-muted/30 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  <div className="col-span-6">Name</div>
+                  <div className="col-span-2 text-right">Size</div>
+                  <div className="col-span-4 text-right">Actions</div>
+                </div>
+                
+                {extractedLoading ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-muted-foreground space-y-3">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                    <span>Loading directory...</span>
+                  </div>
+                ) : extractedBrowserEntries.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+                    <Folder className="h-10 w-10 opacity-20 mb-3" />
+                    <p>No files found</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border/50">
+                    {extractedBrowserEntries.map((entry) => {
+                      const fullPath = `${extractedRoot}/${entry.path}`;
+                       return (
+                        <div 
+                          key={entry.path} 
+                          className="grid grid-cols-12 gap-4 px-4 py-2.5 items-center hover:bg-muted/40 transition-colors group text-sm"
+                        >
+                          <div className="col-span-6 flex items-center min-w-0">
+                            {entry.type === 'dir' ? (
+                              <Folder className="h-4 w-4 text-blue-400 mr-3 shrink-0 fill-blue-400/20" />
+                            ) : (
+                              <FileIcon className="h-4 w-4 text-slate-400 mr-3 shrink-0" />
+                            )}
+                            <button 
+                              className={`truncate text-left outline-none ${entry.type === 'dir' ? 'font-medium hover:text-primary hover:underline' : ''}`}
+                              onClick={() => entry.type === 'dir' && setExtractedDir(entry.path)}
+                            >
+                              {entry.name}
+                            </button>
+                          </div>
+                          
+                          <div className="col-span-2 text-right text-muted-foreground font-mono text-xs">
+                             {entry.type === 'dir' ? '--' : formatBytes(entry.size ?? 0)}
+                          </div>
+                          
+                          <div className="col-span-4 flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                             {entry.type === 'dir' ? (
+                               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setExtractedDir(entry.path)}>
+                                 Open
+                               </Button>
+                             ) : (
+                               <>
+                                 <Button 
+                                   size="sm" 
+                                   variant="ghost" 
+                                   className="h-7 text-xs hover:bg-primary/10 hover:text-primary"
+                                   onClick={() => { setExtractedKernelPath(fullPath); }}
+                                 >
+                                   Set Kernel
+                                 </Button>
+                                 <Button 
+                                   size="sm" 
+                                   variant="ghost" 
+                                   className="h-7 text-xs hover:bg-primary/10 hover:text-primary"
+                                   onClick={() => { setExtractedInitrdPath(fullPath); }}
+                                 >
+                                   Set Initrd
+                                 </Button>
+                               </>
+                             )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t bg-background flex justify-end">
+              <Button variant="outline" onClick={() => setExtractedBrowserOpen(false)}>
+                Done
+              </Button>
+            </div>
           </DialogContent>
-        </Dialog>
+          </Dialog>
       </CardHeader>
       <CardContent>
         {isoMessage && (
