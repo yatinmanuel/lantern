@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ArrowRight, ChevronRight, Download, Folder, File as FileIcon, HardDrive, House, Loader2, Plus, Search, Trash2, Upload } from 'lucide-react';
+import { Download, Folder, File as FileIcon, HardDrive, Loader2, Plus, Trash2, Upload } from 'lucide-react';
 
 
 import { ColumnDef } from '@tanstack/react-table';
@@ -69,8 +69,6 @@ export function IsoManager() {
   const [extractedLoading, setExtractedLoading] = useState(false);
   const [extractedFilter, setExtractedFilter] = useState('');
   const [extractedDir, setExtractedDir] = useState('');
-  const [history, setHistory] = useState<string[]>(['']);
-  const [historyIndex, setHistoryIndex] = useState(0);
   const [extractedBrowserOpen, setExtractedBrowserOpen] = useState(false);
   const [remoteUrl, setRemoteUrl] = useState('');
   const [remoteMeta, setRemoteMeta] = useState<RemoteImageMeta | null>(null);
@@ -135,10 +133,7 @@ export function IsoManager() {
     setExtractedKernelPath('');
     setExtractedInitrdPath('');
     setExtractedFilter('');
-    setExtractedFilter('');
     setExtractedDir('');
-    setHistory(['']);
-    setHistoryIndex(0);
     setAutoExtract(true);
     setAutoLabel('');
     setRemoteUrl('');
@@ -383,42 +378,7 @@ export function IsoManager() {
       setIsoMessage('Select an extracted ISO first.');
       return;
     }
-    setHistory(['']);
-    setHistoryIndex(0);
-    setExtractedDir('');
     setExtractedBrowserOpen(true);
-  }
-  
-  function navigateTo(path: string) {
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(path);
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
-    setExtractedDir(path);
-  }
-
-  function navigateBack() {
-    if (historyIndex > 0) {
-      const newIndex = historyIndex - 1;
-      setHistoryIndex(newIndex);
-      setExtractedDir(history[newIndex]);
-    }
-  }
-
-  function navigateForward() {
-    if (historyIndex < history.length - 1) {
-      const newIndex = historyIndex + 1;
-      setHistoryIndex(newIndex);
-      setExtractedDir(history[newIndex]);
-    }
-  }
-  
-  function navigateUp() {
-    if (!extractedDir) return;
-    const parts = extractedDir.split('/').filter(Boolean);
-    parts.pop();
-    const newPath = parts.join('/');
-    navigateTo(newPath);
   }
 
   const columns: ColumnDef<IsoDisplay>[] = useMemo(
@@ -748,8 +708,8 @@ export function IsoManager() {
               Add Image
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-5xl h-[600px] gap-0 p-0 overflow-hidden outline-none duration-200 sm:rounded-xl flex flex-col">
-            <div className="px-6 py-6 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+          <DialogContent className="w-[1000px] max-w-[95vw] h-[600px] gap-0 p-0 overflow-hidden outline-none duration-200 sm:rounded-xl flex flex-col">
+            <div className="px-6 py-4 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 shrink-0">
               <DialogHeader>
                 <DialogTitle className="text-xl font-medium">Add Image</DialogTitle>
                 <DialogDescription className="text-muted-foreground mt-1.5">
@@ -758,286 +718,279 @@ export function IsoManager() {
               </DialogHeader>
             </div>
             
-            
-              <div className="flex-1 bg-background overflow-hidden flex flex-col">
-                <Tabs value={uploadMode} onValueChange={(v) => setUploadMode(v as UploadMode)} orientation="vertical" className="flex-1 flex overflow-hidden">
-                   <div className="w-[240px] border-r bg-muted/10 p-4 shrink-0 flex flex-col gap-4 overflow-y-auto">
-                     <div className="text-xs font-semibold text-muted-foreground px-2 uppercase tracking-wider">
-                        Upload Method
-                     </div>
-                     <TabsList className="flex flex-col h-auto w-full gap-2 bg-transparent p-0">
-                       <TabsTrigger 
-                          value="iso" 
-                          className="w-full justify-start gap-3 px-3 py-2.5 h-auto font-normal data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:font-medium border border-transparent data-[state=active]:border-border/50 transition-all hover:bg-muted/50"
-                       >
-                         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400 shrink-0">
-                            <FileIcon className="h-4 w-4" />
-                         </div>
-                         <div className="text-left">
-                            <div className="text-sm text-foreground">ISO Upload</div>
-                         </div>
-                       </TabsTrigger>
-                       <TabsTrigger 
-                          value="manual"
-                          className="w-full justify-start gap-3 px-3 py-2.5 h-auto font-normal data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:font-medium border border-transparent data-[state=active]:border-border/50 transition-all hover:bg-muted/50"
-                       >
-                         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-500/10 text-orange-600 dark:bg-orange-500/20 dark:text-orange-400 shrink-0">
-                            <Folder className="h-4 w-4" />
-                         </div>
-                         <div className="text-left">
-                            <div className="text-sm text-foreground">Boot Files</div>
-                         </div>
-                       </TabsTrigger>
-                       <TabsTrigger 
-                          value="url"
-                          className="w-full justify-start gap-3 px-3 py-2.5 h-auto font-normal data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:font-medium border border-transparent data-[state=active]:border-border/50 transition-all hover:bg-muted/50"
-                       >
-                         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-500/10 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400 shrink-0">
-                            <Download className="h-4 w-4" />
-                         </div>
-                         <div className="text-left">
-                            <div className="text-sm text-foreground">Direct URL</div>
-                         </div>
-                       </TabsTrigger>
-                     </TabsList>
-
-                     <div className="mt-auto rounded-lg bg-blue-50/50 dark:bg-blue-950/20 p-3 text-xs text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900/30">
-                        <p className="font-medium mb-1">Tip</p>
-                        <p className="leading-relaxed opacity-90">ISO uploads are auto-extracted for faster network booting.</p>
-                     </div>
-                   </div>
-
-                   <div className="flex-1 overflow-y-auto bg-background">
-                     <TabsContent value="iso" className="mt-0 p-6 space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-                        <div className="space-y-4">
-                          <div className="space-y-2">
-                            <Label>ISO File</Label>
-                            <FileInputWithPreview 
-                              file={isoFile} 
-                              onSelect={setIsoFile} 
-                              accept=".iso" 
-                              label="Upload ISO"
-                            />
-                          </div>
-
-                          <div className="flex items-start gap-3 rounded-lg border p-4 bg-muted/20">
-                            <Checkbox
-                              id="auto-extract"
-                              className="mt-1"
-                              checked={autoExtract}
-                              onCheckedChange={(value) => setAutoExtract(value === true)}
-                            />
-                            <div className="grid gap-1.5">
-                              <Label htmlFor="auto-extract" className="font-medium">
-                                Auto-extract contents
-                              </Label>
-                              <p className="text-xs text-muted-foreground mr-8">
-                                Automatically extract kernel and initrd to generate an iPXE entry.
-                              </p>
-                            </div>
-                          </div>
-
-                          {autoExtract && (
-                            <div className="space-y-2">
-                              <Label htmlFor="auto-label">Image Label <span className="text-muted-foreground text-xs font-normal">(Optional)</span></Label>
-                              <Input
-                                id="auto-label"
-                                placeholder="e.g. Ubuntu 22.04"
-                                value={autoLabel}
-                                onChange={(e) => setAutoLabel(e.target.value)}
-                                className="bg-background"
-                              />
-                            </div>
-                          )}
-                        </div>
-                     </TabsContent>
-
-                     <TabsContent value="manual" className="mt-0 p-6 space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-                        <div className="flex rounded-lg bg-muted p-1 w-fit mb-4">
-                           <button
-                             type="button"
-                             onClick={() => setManualMode('upload')}
-                             className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                               manualMode === 'upload' 
-                                 ? 'bg-background shadow-sm text-foreground' 
-                                 : 'text-muted-foreground hover:text-foreground'
-                             }`}
-                           >
-                             Upload Files
-                           </button>
-                           <button
-                             type="button"
-                             onClick={() => setManualMode('extracted')}
-                             className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                               manualMode === 'extracted' 
-                                 ? 'bg-background shadow-sm text-foreground' 
-                                 : 'text-muted-foreground hover:text-foreground'
-                             }`}
-                           >
-                             Use Extracted
-                           </button>
-                        </div>
-
-                        <div className="grid gap-6">
-                          <div className="space-y-2">
-                            <Label htmlFor="manual-label">Image Label</Label>
-                            <Input
-                              id="manual-label"
-                              placeholder="e.g. Ubuntu 22.04"
-                              value={manualLabel}
-                              onChange={(e) => setManualLabel(e.target.value)}
-                            />
-                          </div>
-
-                          {manualMode === 'upload' ? (
-                            <div className="grid grid-cols-2 gap-4">
-                              <div className="space-y-2">
-                                <Label>Kernel (vmlinuz)</Label>
-                                <FileInputWithPreview 
-                                  file={manualKernel} 
-                                  onSelect={setManualKernel}
-                                  label="Upload Kernel" 
-                                />
-                              </div>
-                              <div className="space-y-2">
-                                <Label>Initrd (initramfs)</Label>
-                                <FileInputWithPreview 
-                                  file={manualInitrd} 
-                                  onSelect={setManualInitrd}
-                                  label="Upload Initrd" 
-                                />
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="space-y-4 rounded-lg border p-4 bg-muted/20">
-                              <div className="space-y-2">
-                                <Label>Source ISO</Label>
-                                <select
-                                    value={extractedIsoName}
-                                    onChange={(e) => {
-                                      setExtractedIsoName(e.target.value);
-                                      if (!manualLabel.trim()) {
-                                        setManualLabel(e.target.value.replace(/\.iso$/i, ''));
-                                      }
-                                    }}
-                                    className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                                  >
-                                  <option value="">Select an ISO...</option>
-                                  {isoFiles
-                                    .filter((file) => file.id.toLowerCase().endsWith('.iso'))
-                                    .map((file) => (
-                                      <option key={file.id} value={file.id}>
-                                        {file.name}
-                                      </option>
-                                    ))}
-                                </select>
-                              </div>
-                              
-                              <div className="grid gap-4">
-                                 <div className="flex gap-2 items-end">
-                                   <div className="flex-1 space-y-2">
-                                      <Label>Kernel Path</Label>
-                                      <Input value={extractedKernelPath} readOnly placeholder="Select from explorer" />
-                                   </div>
-                                   <Button variant="outline" onClick={openExtractedBrowser}>Browse</Button>
-                                 </div>
-                                 <div className="flex-1 space-y-2">
-                                    <Label>Initrd Path</Label>
-                                    <Input value={extractedInitrdPath} readOnly placeholder="Select from explorer" />
-                                 </div>
-                              </div>
-                            </div>
-                          )}
-
-                          <div className="space-y-2">
-                            <Label htmlFor="manual-args">Boot Arguments <span className="text-muted-foreground text-xs font-normal">(Optional)</span></Label>
-                            <Input
-                              id="manual-args"
-                              placeholder="e.g. ip=dhcp console=ttyS0"
-                              value={manualArgs}
-                              onChange={(e) => setManualArgs(e.target.value)}
-                              className="font-mono text-xs"
-                            />
-                          </div>
-                        </div>
-                     </TabsContent>
-
-                     <TabsContent value="url" className="mt-0 p-6 space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-                        <div className="space-y-6">
-                          <div className="space-y-2">
-                            <Label htmlFor="remote-url">Source URL</Label>
-                            <div className="flex gap-2">
-                              <Input
-                                id="remote-url"
-                                placeholder="https://example.com/image.iso"
-                                value={remoteUrl}
-                                onChange={(e) => {
-                                  setRemoteUrl(e.target.value);
-                                  setRemoteMeta(null);
-                                  setRemoteFileName('');
-                                  setRemoteFileNameEdited(false);
-                                }}
-                              />
-                              <Button 
-                                variant="secondary"
-                                onClick={handleQueryRemoteMeta}
-                                disabled={remoteLoading || !remoteUrl}
-                              >
-                                {remoteLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                Check
-                              </Button>
-                            </div>
-                          </div>
-
-                          {remoteMeta && (
-                            <div className="rounded-lg border bg-muted/30 p-3 text-sm flex justify-between items-center text-muted-foreground">
-                              <span>{remoteMeta.mimeType}</span>
-                              <span>{formatBytes(remoteMeta.size || 0)}</span>
-                            </div>
-                          )}
-
-                          <div className="space-y-2">
-                            <Label>Save Filename</Label>
-                            <Input
-                               value={remoteFileName}
-                               onChange={(e) => {
-                                 setRemoteFileName(e.target.value);
-                                 setRemoteFileNameEdited(true);
-                               }}
-                               placeholder="image.iso"
-                            />
-                          </div>
-
-                          <div className="flex items-start gap-3 rounded-lg border p-4 bg-muted/20">
-                             <Checkbox
-                               id="remote-auto-extract"
-                               className="mt-1"
-                               checked={remoteAutoExtract}
-                               onCheckedChange={(value) => setRemoteAutoExtract(value === true)}
-                             />
-                             <div className="grid gap-1.5">
-                               <Label htmlFor="remote-auto-extract" className="font-medium">
-                                 Auto-extract contents
-                               </Label>
-                             </div>
-                           </div>
-                           
-                           {remoteAutoExtract && (
-                             <div className="space-y-2">
-                               <Label htmlFor="remote-label">Image Label <span className="text-muted-foreground text-xs font-normal">(Optional)</span></Label>
-                               <Input
-                                 id="remote-label"
-                                 placeholder="e.g. Ubuntu 22.04"
-                                 value={remoteLabel}
-                                 onChange={(e) => setRemoteLabel(e.target.value)}
-                               />
-                             </div>
-                           )}
-                        </div>
-                     </TabsContent>
-                   </div>
-                </Tabs>
+            <div className="flex bg-muted/30 flex-1 overflow-hidden">
+              {/* Sidebar Tabs */}
+              <div className="w-[200px] border-r bg-background/50 p-4 space-y-1">
+                <button
+                  onClick={() => setUploadMode('iso')}
+                  className={`w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    uploadMode === 'iso' 
+                      ? 'bg-secondary text-foreground' 
+                      : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                  }`}
+                >
+                  Upload ISO
+                </button>
+                <button
+                  onClick={() => setUploadMode('manual')}
+                  className={`w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    uploadMode === 'manual' 
+                      ? 'bg-secondary text-foreground' 
+                      : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                  }`}
+                >
+                  Boot Files
+                </button>
+                <button
+                  onClick={() => setUploadMode('url')}
+                  className={`w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    uploadMode === 'url' 
+                      ? 'bg-secondary text-foreground' 
+                      : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                  }`}
+                >
+                  Direct URL
+                </button>
               </div>
+
+              {/* Main Content */}
+              <div className="flex-1 p-6 bg-background">
+                {uploadMode === 'iso' && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>ISO File</Label>
+                        <FileInputWithPreview 
+                          file={isoFile} 
+                          onSelect={setIsoFile} 
+                          accept=".iso" 
+                          label="Upload ISO"
+                        />
+                      </div>
+
+                      <div className="flex items-start gap-3 rounded-lg border p-4 bg-muted/20">
+                        <Checkbox
+                          id="auto-extract"
+                          className="mt-1"
+                          checked={autoExtract}
+                          onCheckedChange={(value) => setAutoExtract(value === true)}
+                        />
+                        <div className="grid gap-1.5">
+                          <Label htmlFor="auto-extract" className="font-medium">
+                            Auto-extract contents
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                            Automatically extract kernel and initrd to generate an iPXE entry.
+                          </p>
+                        </div>
+                      </div>
+
+                      {autoExtract && (
+                        <div className="space-y-2">
+                          <Label htmlFor="auto-label">Image Label <span className="text-muted-foreground text-xs font-normal">(Optional)</span></Label>
+                          <Input
+                            id="auto-label"
+                            placeholder="e.g. Ubuntu 22.04"
+                            value={autoLabel}
+                            onChange={(e) => setAutoLabel(e.target.value)}
+                            className="bg-background"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {uploadMode === 'manual' && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                    {/* Sub-tabs for manual mode */}
+                    <div className="flex rounded-lg bg-muted p-1 w-fit mb-4">
+                       <button
+                         type="button"
+                         onClick={() => setManualMode('upload')}
+                         className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                           manualMode === 'upload' 
+                             ? 'bg-background shadow-sm text-foreground' 
+                             : 'text-muted-foreground hover:text-foreground'
+                         }`}
+                       >
+                         Upload Files
+                       </button>
+                       <button
+                         type="button"
+                         onClick={() => setManualMode('extracted')}
+                         className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                           manualMode === 'extracted' 
+                             ? 'bg-background shadow-sm text-foreground' 
+                             : 'text-muted-foreground hover:text-foreground'
+                         }`}
+                       >
+                         Use Extracted
+                       </button>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="manual-label">Image Label</Label>
+                        <Input
+                          id="manual-label"
+                          placeholder="e.g. Ubuntu 22.04"
+                          value={manualLabel}
+                          onChange={(e) => setManualLabel(e.target.value)}
+                        />
+                      </div>
+
+                      {manualMode === 'upload' ? (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label>Kernel (vmlinuz)</Label>
+                            <FileInputWithPreview 
+                              file={manualKernel} 
+                              onSelect={setManualKernel}
+                              label="Upload Kernel" 
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Initrd (initramfs)</Label>
+                            <FileInputWithPreview 
+                              file={manualInitrd} 
+                              onSelect={setManualInitrd}
+                              label="Upload Initrd" 
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-4 rounded-lg border p-4 bg-muted/20">
+                          <div className="space-y-2">
+                            <Label>Source ISO</Label>
+                            <select
+                                value={extractedIsoName}
+                                onChange={(e) => {
+                                  setExtractedIsoName(e.target.value);
+                                  if (!manualLabel.trim()) {
+                                    setManualLabel(e.target.value.replace(/\.iso$/i, ''));
+                                  }
+                                }}
+                                className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                              >
+                              <option value="">Select an ISO...</option>
+                              {isoFiles
+                                .filter((file) => file.id.toLowerCase().endsWith('.iso'))
+                                .map((file) => (
+                                  <option key={file.id} value={file.id}>
+                                    {file.name}
+                                  </option>
+                                ))}
+                            </select>
+                          </div>
+                          
+                          <div className="grid gap-4">
+                             <div className="flex gap-2 items-end">
+                               <div className="flex-1 space-y-2">
+                                  <Label>Kernel Path</Label>
+                                  <Input value={extractedKernelPath} readOnly placeholder="Select from explorer" />
+                               </div>
+                               <Button variant="outline" onClick={openExtractedBrowser}>Browse</Button>
+                             </div>
+                             <div className="flex-1 space-y-2">
+                                <Label>Initrd Path</Label>
+                                <Input value={extractedInitrdPath} readOnly placeholder="Select from explorer" />
+                             </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="space-y-2">
+                        <Label htmlFor="manual-args">Boot Arguments <span className="text-muted-foreground text-xs font-normal">(Optional)</span></Label>
+                        <Input
+                          id="manual-args"
+                          placeholder="e.g. ip=dhcp console=ttyS0"
+                          value={manualArgs}
+                          onChange={(e) => setManualArgs(e.target.value)}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {uploadMode === 'url' && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="remote-url">Source URL</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            id="remote-url"
+                            placeholder="https://example.com/image.iso"
+                            value={remoteUrl}
+                            onChange={(e) => {
+                              setRemoteUrl(e.target.value);
+                              setRemoteMeta(null);
+                              setRemoteFileName('');
+                              setRemoteFileNameEdited(false);
+                            }}
+                          />
+                          <Button 
+                            variant="secondary"
+                            onClick={handleQueryRemoteMeta}
+                            disabled={remoteLoading || !remoteUrl}
+                          >
+                            {remoteLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Check
+                          </Button>
+                        </div>
+                      </div>
+
+                      {remoteMeta && (
+                        <div className="rounded-lg border bg-muted/30 p-3 text-sm flex justify-between items-center text-muted-foreground">
+                          <span>{remoteMeta.mimeType}</span>
+                          <span>{formatBytes(remoteMeta.size || 0)}</span>
+                        </div>
+                      )}
+
+                      <div className="space-y-2">
+                        <Label>Save Filename</Label>
+                        <Input
+                           value={remoteFileName}
+                           onChange={(e) => {
+                             setRemoteFileName(e.target.value);
+                             setRemoteFileNameEdited(true);
+                           }}
+                           placeholder="image.iso"
+                        />
+                      </div>
+
+                      <div className="flex items-start gap-3 rounded-lg border p-4 bg-muted/20">
+                         <Checkbox
+                           id="remote-auto-extract"
+                           className="mt-1"
+                           checked={remoteAutoExtract}
+                           onCheckedChange={(value) => setRemoteAutoExtract(value === true)}
+                         />
+                         <div className="grid gap-1.5">
+                           <Label htmlFor="remote-auto-extract" className="font-medium">
+                             Auto-extract contents
+                           </Label>
+                         </div>
+                       </div>
+                       
+                       {remoteAutoExtract && (
+                         <div className="space-y-2">
+                           <Label htmlFor="remote-label">Image Label <span className="text-muted-foreground text-xs font-normal">(Optional)</span></Label>
+                           <Input
+                             id="remote-label"
+                             placeholder="e.g. Ubuntu 22.04"
+                             value={remoteLabel}
+                             onChange={(e) => setRemoteLabel(e.target.value)}
+                           />
+                         </div>
+                       )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
 
             <div className="flex items-center justify-between border-t bg-background/95 p-6 backdrop-blur">
                <div className="text-xs text-muted-foreground">
@@ -1067,7 +1020,7 @@ export function IsoManager() {
             }
           }}
         >
-          <DialogContent className="max-w-md gap-0 p-0 overflow-hidden sm:rounded-xl">
+          <DialogContent className="w-[600px] max-w-[90vw] h-[450px] gap-0 p-0 overflow-hidden sm:rounded-xl flex flex-col">
             <div className="px-6 py-5 border-b bg-background/95 backdrop-blur">
               <DialogHeader>
                 <DialogTitle className="text-lg font-medium tracking-tight">Manage Image</DialogTitle>
@@ -1077,7 +1030,7 @@ export function IsoManager() {
               </DialogHeader>
             </div>
             
-            <div className="p-6 space-y-6">
+            <div className="p-6 space-y-6 flex-1 flex flex-col justify-between">
             {manageItem ? (
               <div className="space-y-4 text-sm">
                 <div className="grid grid-cols-3 gap-2 py-2 border-b border-border/50">
@@ -1156,52 +1109,41 @@ export function IsoManager() {
           onOpenChange={(open) => setExtractedBrowserOpen(open)}
         >
           <DialogContent className="w-[1000px] max-w-[95vw] h-[650px] gap-0 p-0 overflow-hidden outline-none duration-200 sm:rounded-xl flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 border-b bg-background/95 backdrop-blur z-10 shrink-0 gap-4">
-               <div className="flex items-center gap-2">
-                 <Button variant="ghost" size="icon" disabled={historyIndex <= 0} onClick={navigateBack} className="h-8 w-8">
-                   <ArrowLeft className="h-4 w-4" />
-                 </Button>
-                 <Button variant="ghost" size="icon" disabled={historyIndex >= history.length - 1} onClick={navigateForward} className="h-8 w-8">
-                   <ArrowRight className="h-4 w-4" />
-                 </Button>
-               </div>
-               
-               <div className="flex-1 flex items-center bg-muted/40 border rounded-md px-3 h-9 text-sm relative">
-                  <div className="flex items-center text-muted-foreground mr-2">
-                    <House className="h-4 w-4 hover:text-foreground cursor-pointer transition-colors" onClick={() => navigateTo('')} />
-                  </div>
-                  
-                  <div className="flex items-center overflow-hidden flex-1 mask-linear-fade">
-                    {extractedDir ? (
-                      extractedDir.split('/').filter(Boolean).map((part, i, arr) => {
-                        const path = arr.slice(0, i + 1).join('/');
-                         return (
-                           <div key={path} className="flex items-center shrink-0">
-                             <ChevronRight className="h-3 w-3 text-muted-foreground mx-1" />
-                             <button
-                               onClick={() => navigateTo(path)}
-                               className="hover:bg-muted-foreground/10 px-1.5 py-0.5 rounded transition-colors truncate max-w-[150px]"
-                             >
-                               {part}
-                             </button>
-                           </div>
-                         )
-                      })
-                    ) : (
-                      <span className="text-muted-foreground ml-2">Root</span>
-                    )}
-                  </div>
-               </div>
-
-               <div className="relative w-[240px]">
-                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                 <Input
-                   value={extractedFilter}
-                   onChange={(e) => setExtractedFilter(e.target.value)}
-                   placeholder="Search..."
-                   className="pl-9 h-9 bg-background focus-visible:ring-offset-0"
-                 />
-               </div>
+            <div className="flex items-center justify-between px-6 py-4 border-b bg-background/95 backdrop-blur z-10 shrink-0">
+              <div className="space-y-1">
+                <DialogTitle className="text-lg font-medium tracking-tight">File Explorer</DialogTitle>
+                <div className="flex items-center text-sm text-muted-foreground gap-2">
+                   <div className="flex items-center">
+                     <button onClick={() => setExtractedDir('')} className="hover:text-foreground transition-colors hover:underline">
+                       {extractedRoot.replace(/^\/iso\//, '') || 'root'}
+                     </button>
+                     {extractedDir.split('/').filter(Boolean).map((part, i, arr) => {
+                       const path = arr.slice(0, i + 1).join('/');
+                       return (
+                         <span key={path} className="flex items-center">
+                           <span className="mx-1.5 opacity-50">/</span>
+                           <button 
+                             onClick={() => setExtractedDir(path)}
+                             className="hover:text-foreground transition-colors hover:underline"
+                           >
+                             {part}
+                           </button>
+                         </span>
+                       );
+                     })}
+                   </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                 <div className="relative">
+                   <Input
+                     value={extractedFilter}
+                     onChange={(e) => setExtractedFilter(e.target.value)}
+                     placeholder="Search files..."
+                     className="h-8 w-[200px] bg-muted/50"
+                   />
+                 </div>
+              </div>
             </div>
 
             <div className="flex-1 overflow-auto bg-muted/5 p-4">
@@ -1239,7 +1181,7 @@ export function IsoManager() {
                             )}
                             <button 
                               className={`truncate text-left outline-none ${entry.type === 'dir' ? 'font-medium hover:text-primary hover:underline' : ''}`}
-                              onClick={() => entry.type === 'dir' && navigateTo(entry.path)}
+                              onClick={() => entry.type === 'dir' && setExtractedDir(entry.path)}
                             >
                               {entry.name}
                             </button>
@@ -1251,7 +1193,7 @@ export function IsoManager() {
                           
                           <div className="col-span-4 flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                              {entry.type === 'dir' ? (
-                               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => navigateTo(entry.path)}>
+                               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setExtractedDir(entry.path)}>
                                  Open
                                </Button>
                              ) : (
