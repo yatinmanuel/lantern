@@ -17,6 +17,7 @@ import {
   sortableKeyboardCoordinates, 
   verticalListSortingStrategy 
 } from '@dnd-kit/sortable';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { BootMenu, menusApi, BootMenuContentItem } from '@/lib/menus-api';
 import { isoApi, IsoFile } from '@/lib/iso-api';
 import { Button } from '@/components/ui/button';
@@ -150,8 +151,9 @@ export function MenuEditor({ menu, onDelete, onUpdate }: MenuEditorProps) {
          </div>
       </div>
 
+
       {/* Editor Area */}
-      <div className="flex-1 overflow-hidden flex flex-col p-6 bg-muted/5">
+      <div className="flex-1 overflow-hidden flex flex-col p-6 bg-transparent">
          <div className="flex items-center justify-between mb-4">
             <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wider">Menu Items</h3>
             
@@ -203,6 +205,7 @@ export function MenuEditor({ menu, onDelete, onUpdate }: MenuEditorProps) {
                sensors={sensors} 
                collisionDetection={closestCenter} 
                onDragEnd={handleDragEnd}
+               modifiers={[restrictToVerticalAxis]}
             >
                <SortableContext 
                   items={items.map(i => i._id)} 

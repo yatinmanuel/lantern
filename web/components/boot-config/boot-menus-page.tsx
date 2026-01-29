@@ -94,8 +94,8 @@ export function BootMenusPage() {
         <p className="text-muted-foreground">Manage PXE boot menus and client overrides.</p>
       </div>
 
-      <Card className="flex flex-1 flex-col w-full overflow-hidden min-h-0">
-        <CardContent className="flex flex-1 overflow-hidden p-0 min-h-0">
+      <div className="flex flex-1 flex-col w-full overflow-hidden min-h-0 border rounded-xl bg-background shadow-sm">
+        <div className="flex flex-1 overflow-hidden p-0 min-h-0">
           <div className="flex flex-1 overflow-hidden min-h-0">
             {/* Sidebar: Menu List */}
             <div className="w-80 border-r bg-muted/10 flex flex-col">
@@ -180,8 +180,8 @@ export function BootMenusPage() {
             {/* Right Panel: Client Overrides */}
             <ClientOverridesPanel menus={menus} />
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }
