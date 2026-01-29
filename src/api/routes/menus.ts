@@ -2,7 +2,7 @@
 import { Router } from 'express';
 import { BootMenuModel } from '../../database/models.js';
 import { enqueueJob } from '../../jobs/service.js';
-import { buildJobMeta } from './jobs.js';
+import { buildJobMeta } from '../../jobs/request-context.js';
 
 const router = Router();
 

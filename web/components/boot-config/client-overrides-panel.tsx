@@ -3,6 +3,8 @@
 
 import { useState, useEffect } from 'react';
 import { BootMenu } from '@/lib/menus-api';
+import { api } from '@/lib/api';
+import { withSessionHeaders } from '@/lib/session';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -26,6 +28,7 @@ interface ClientOverridesPanelProps {
 export function ClientOverridesPanel({ menus }: ClientOverridesPanelProps) {
   const [servers, setServers] = useState<Server[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
   useEffect(() => {
     loadServers();
@@ -33,11 +36,8 @@ export function ClientOverridesPanel({ menus }: ClientOverridesPanelProps) {
 
   async function loadServers() {
     try {
-      // Assuming GET /api/servers exists and returns list
-      const res = await fetch('/api/servers');
-      if (!res.ok) throw new Error('Failed to load servers');
-      const data = await res.json();
-      setServers(data);
+      const data = await api.getServers();
+      setServers(data as Server[]);
     } catch (error) {
       console.error(error);
       toast.error('Failed to load clients');
@@ -50,9 +50,10 @@ export function ClientOverridesPanel({ menus }: ClientOverridesPanelProps) {
     const mId = menuId === 'default' ? null : parseInt(menuId, 10);
     try {
       // Call assignment API
-      const res = await fetch('/api/boot-menus/assign', {
+      const res = await fetch(`${apiBaseUrl}/api/boot-menus/assign`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: withSessionHeaders({ 'Content-Type': 'application/json' }),
+        credentials: 'include',
         body: JSON.stringify({ clientId: serverId, menuId: mId }),
       });
       if (!res.ok) throw new Error('Failed to assign menu');
