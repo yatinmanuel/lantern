@@ -10,6 +10,7 @@ import { Card } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -45,6 +46,9 @@ export function BootMenusPage() {
   const [menuName, setMenuName] = useState('');
   const [menuDescription, setMenuDescription] = useState('');
   const [menuIsDefault, setMenuIsDefault] = useState(false);
+  const [menuTimeoutSec, setMenuTimeoutSec] = useState<number>(5);
+  const [menuDefaultItemKey, setMenuDefaultItemKey] = useState<string>('');
+  const [menuColors, setMenuColors] = useState<BootMenu['menu_colors']>(undefined);
   const [editOpen, setEditOpen] = useState(false);
   const [menuItems, setMenuItems] = useState<BootMenuContentItem[]>([]);
   const [isSavingMenu, setIsSavingMenu] = useState(false);
@@ -61,6 +65,9 @@ export function BootMenusPage() {
       setMenuName('');
       setMenuDescription('');
       setMenuIsDefault(false);
+      setMenuTimeoutSec(5);
+      setMenuDefaultItemKey('');
+      setMenuColors(undefined);
       setMenuItems([]);
       setEditOpen(false);
       return;
@@ -68,6 +75,9 @@ export function BootMenusPage() {
     setMenuName(selectedMenu.name);
     setMenuDescription(selectedMenu.description || '');
     setMenuIsDefault(selectedMenu.is_default);
+    setMenuTimeoutSec(selectedMenu.timeout_sec ?? 5);
+    setMenuDefaultItemKey(selectedMenu.default_item_key || '');
+    setMenuColors(selectedMenu.menu_colors);
     setMenuItems(selectedMenu.content || []);
     setEditOpen(false);
     setDeleteOpen(false);
@@ -139,6 +149,9 @@ export function BootMenusPage() {
         name: menuName.trim(),
         description: menuDescription,
         is_default: menuIsDefault,
+        timeout_sec: menuTimeoutSec,
+        default_item_key: menuDefaultItemKey || undefined,
+        menu_colors: menuColors,
         content: menuItems,
       });
       const nextMenu: BootMenu = {
@@ -146,6 +159,9 @@ export function BootMenusPage() {
         name: menuName.trim(),
         description: menuDescription,
         is_default: menuIsDefault,
+        timeout_sec: menuTimeoutSec,
+        default_item_key: menuDefaultItemKey || undefined,
+        menu_colors: menuColors,
         content: menuItems,
       };
       setMenus((prev) =>
@@ -175,10 +191,31 @@ export function BootMenusPage() {
       setMenuName(selectedMenu.name);
       setMenuDescription(selectedMenu.description || '');
       setMenuIsDefault(selectedMenu.is_default);
+      setMenuTimeoutSec(selectedMenu.timeout_sec ?? 5);
+      setMenuDefaultItemKey(selectedMenu.default_item_key || '');
+      setMenuColors(selectedMenu.menu_colors);
       setDeleteOpen(false);
     }
     setEditOpen(open);
   }
+
+  // Helper to get selectable items for default selection dropdown
+  function getSelectableItems(items: BootMenuContentItem[], prefix = ''): Array<{ key: string; label: string }> {
+    const result: Array<{ key: string; label: string }> = [];
+    items.forEach((item, idx) => {
+      const key = prefix ? `${prefix}-${idx}` : `${idx}`;
+      if (item.type === 'iso' || item.type === 'smart_pxe' || item.type === 'power_state' || item.type === 'chain') {
+        const label = item.label || item.isoName || item.content || `Item ${idx}`;
+        result.push({ key, label: prefix ? `${prefix} > ${label}` : label });
+      } else if (item.type === 'folder' && item.children) {
+        const folderLabel = item.label || 'Folder';
+        result.push(...getSelectableItems(item.children, folderLabel));
+      }
+    });
+    return result;
+  }
+
+  const selectableItems = getSelectableItems(menuItems);
 
   const filteredMenus = menus.filter(m => 
     m.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -300,10 +337,10 @@ export function BootMenusPage() {
             </ScrollArea>
 
             <Dialog open={editOpen} onOpenChange={handleEditOpenChange}>
-              <DialogContent className="sm:max-w-lg">
+              <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Edit Menu</DialogTitle>
-                  <DialogDescription>Update the menu name, description, and default state.</DialogDescription>
+                  <DialogDescription>Update menu settings including name, timeout, default selection, and colors.</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
                   <div className="space-y-2">
@@ -323,6 +360,100 @@ export function BootMenusPage() {
                       onChange={(e) => setMenuDescription(e.target.value)}
                       placeholder="Add a short description"
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="menu-timeout">Timeout (seconds)</Label>
+                    <Input
+                      id="menu-timeout"
+                      type="number"
+                      min={0}
+                      max={300}
+                      value={menuTimeoutSec}
+                      onChange={(e) => setMenuTimeoutSec(parseInt(e.target.value) || 0)}
+                      placeholder="0 = wait indefinitely"
+                    />
+                    <p className="text-xs text-muted-foreground">0 = wait indefinitely</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="menu-default">Default Selection</Label>
+                    <Select value={menuDefaultItemKey || 'exit'} onValueChange={setMenuDefaultItemKey}>
+                      <SelectTrigger id="menu-default">
+                        <SelectValue placeholder="Select default item" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="exit">Exit to shell</SelectItem>
+                        {selectableItems.map((item) => (
+                          <SelectItem key={item.key} value={`item_${item.key}`}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Menu Colors</Label>
+                    <Select 
+                      value={menuColors?.preset || 'default'} 
+                      onValueChange={(value) => setMenuColors(value === 'default' ? undefined : { preset: value as 'dark' | 'custom', ...(value === 'custom' ? { default_fg: 7, default_bg: 0, highlight_fg: 0, highlight_bg: 7 } : {}) })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select color preset" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">Default</SelectItem>
+                        <SelectItem value="dark">Dark</SelectItem>
+                        <SelectItem value="custom">Custom</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {menuColors?.preset === 'custom' && (
+                      <div className="grid grid-cols-2 gap-2 pt-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Text FG</Label>
+                          <Input 
+                            type="number" 
+                            min={0} 
+                            max={7} 
+                            value={menuColors.default_fg ?? 7} 
+                            onChange={(e) => setMenuColors({ ...menuColors, default_fg: parseInt(e.target.value) || 0 })}
+                            className="h-8"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Text BG</Label>
+                          <Input 
+                            type="number" 
+                            min={0} 
+                            max={7} 
+                            value={menuColors.default_bg ?? 0} 
+                            onChange={(e) => setMenuColors({ ...menuColors, default_bg: parseInt(e.target.value) || 0 })}
+                            className="h-8"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Selected FG</Label>
+                          <Input 
+                            type="number" 
+                            min={0} 
+                            max={7} 
+                            value={menuColors.highlight_fg ?? 0} 
+                            onChange={(e) => setMenuColors({ ...menuColors, highlight_fg: parseInt(e.target.value) || 0 })}
+                            className="h-8"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Selected BG</Label>
+                          <Input 
+                            type="number" 
+                            min={0} 
+                            max={7} 
+                            value={menuColors.highlight_bg ?? 7} 
+                            onChange={(e) => setMenuColors({ ...menuColors, highlight_bg: parseInt(e.target.value) || 0 })}
+                            className="h-8"
+                          />
+                        </div>
+                        <p className="col-span-2 text-xs text-muted-foreground">0=black, 1=red, 2=green, 3=yellow, 4=blue, 5=magenta, 6=cyan, 7=white</p>
+                      </div>
+                    )}
                   </div>
                   <label className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Checkbox

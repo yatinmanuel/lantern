@@ -139,6 +139,11 @@ export async function initDatabase(): Promise<void> {
 
     ALTER TABLE servers 
       ADD COLUMN IF NOT EXISTS boot_menu_id UUID REFERENCES boot_menus(id) ON DELETE SET NULL;
+
+    ALTER TABLE boot_menus
+      ADD COLUMN IF NOT EXISTS timeout_sec INTEGER,
+      ADD COLUMN IF NOT EXISTS default_item_key TEXT,
+      ADD COLUMN IF NOT EXISTS menu_colors JSONB;
   `);
 
   await db.query(`

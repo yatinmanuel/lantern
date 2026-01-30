@@ -483,12 +483,23 @@ export const IsoFileModel = {
   },
 };
 
+export interface MenuColors {
+  preset?: 'default' | 'dark' | 'custom';
+  default_fg?: number | string;
+  default_bg?: number | string;
+  highlight_fg?: number | string;
+  highlight_bg?: number | string;
+}
+
 export interface BootMenu {
   id: string;
   name: string;
   description: string | null;
   content: Record<string, any>[];
   is_default: boolean;
+  timeout_sec?: number;
+  default_item_key?: string;
+  menu_colors?: MenuColors;
   created_at: string;
   updated_at: string;
 }
@@ -500,10 +511,18 @@ export const BootMenuModel = {
       await db.query('UPDATE boot_menus SET is_default = false');
     }
     const result = await db.query(
-      `INSERT INTO boot_menus (name, description, content, is_default)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO boot_menus (name, description, content, is_default, timeout_sec, default_item_key, menu_colors)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [menu.name, menu.description, JSON.stringify(menu.content), menu.is_default]
+      [
+        menu.name,
+        menu.description,
+        JSON.stringify(menu.content),
+        menu.is_default,
+        menu.timeout_sec ?? null,
+        menu.default_item_key ?? null,
+        menu.menu_colors ? JSON.stringify(menu.menu_colors) : null
+      ]
     );
     return result.rows[0] as BootMenu;
   },
@@ -532,6 +551,18 @@ export const BootMenuModel = {
       }
       fields.push(`is_default = $${idx++}`);
       values.push(updates.is_default);
+    }
+    if (updates.timeout_sec !== undefined) {
+      fields.push(`timeout_sec = $${idx++}`);
+      values.push(updates.timeout_sec);
+    }
+    if (updates.default_item_key !== undefined) {
+      fields.push(`default_item_key = $${idx++}`);
+      values.push(updates.default_item_key);
+    }
+    if (updates.menu_colors !== undefined) {
+      fields.push(`menu_colors = $${idx++}`);
+      values.push(updates.menu_colors ? JSON.stringify(updates.menu_colors) : null);
     }
 
     if (fields.length === 0) {
@@ -579,22 +610,48 @@ export const BootMenuModel = {
       return { updated: 0 };
     }
 
+    // Recursive helper to filter items and handle folders
+    function filterItemsRecursively(items: any[]): { filtered: any[]; changed: boolean } {
+      let changed = false;
+      const filtered = items.filter((item: any) => {
+        if (!item) return false;
+        // Filter out iso and smart_pxe entries that match
+        if (item.type === 'iso' || item.type === 'smart_pxe') {
+          if (isoId && item.isoId === isoId) {
+            changed = true;
+            return false;
+          }
+          if (isoName && item.isoName === isoName) {
+            changed = true;
+            return false;
+          }
+        }
+        return true;
+      }).map((item: any) => {
+        // Recursively process folder children
+        if (item.type === 'folder' && Array.isArray(item.children)) {
+          const childResult = filterItemsRecursively(item.children);
+          if (childResult.changed) {
+            changed = true;
+            return { ...item, children: childResult.filtered };
+          }
+        }
+        return item;
+      });
+      return { filtered, changed };
+    }
+
     const menus = await this.getAll();
     let updated = 0;
 
     await Promise.all(
       menus.map(async (menu) => {
         const content = Array.isArray(menu.content) ? menu.content : [];
-        const nextContent = content.filter((item: any) => {
-          if (!item || item.type !== 'iso') return true;
-          if (isoId && item.isoId === isoId) return false;
-          if (isoName && item.isoName === isoName) return false;
-          return true;
-        });
+        const result = filterItemsRecursively(content);
 
-        if (nextContent.length !== content.length) {
+        if (result.changed) {
           updated += 1;
-          await this.update(menu.id, { content: nextContent });
+          await this.update(menu.id, { content: result.filtered });
         }
       })
     );
