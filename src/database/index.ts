@@ -30,9 +30,27 @@ export async function initDatabase(): Promise<void> {
 
   await db.query('CREATE EXTENSION IF NOT EXISTS pgcrypto');
 
+  const isoIdTypeResult = await db.query(
+    `SELECT data_type FROM information_schema.columns WHERE table_name = 'iso_entries' AND column_name = 'id'`
+  );
+  const menuIdTypeResult = await db.query(
+    `SELECT data_type FROM information_schema.columns WHERE table_name = 'boot_menus' AND column_name = 'id'`
+  );
+  const isoIdType = isoIdTypeResult.rows[0]?.data_type;
+  const menuIdType = menuIdTypeResult.rows[0]?.data_type;
+  const needsReset = (isoIdType && isoIdType !== 'uuid') || (menuIdType && menuIdType !== 'uuid');
+
+  if (needsReset) {
+    await db.query('ALTER TABLE servers DROP COLUMN IF EXISTS boot_menu_id');
+    await db.query('DROP TABLE IF EXISTS boot_menus');
+    await db.query('DROP TABLE IF EXISTS iso_entries');
+    await db.query('DROP TABLE IF EXISTS iso_files');
+  }
+
   await db.query(`
     CREATE TABLE IF NOT EXISTS servers (
       id SERIAL PRIMARY KEY,
+      uuid UUID NOT NULL DEFAULT gen_random_uuid(),
       mac_address TEXT UNIQUE NOT NULL,
       ip_address TEXT,
       hostname TEXT,
@@ -72,6 +90,16 @@ export async function initDatabase(): Promise<void> {
   `);
 
   await db.query(`
+    ALTER TABLE servers ADD COLUMN IF NOT EXISTS uuid UUID DEFAULT gen_random_uuid();
+    UPDATE servers SET uuid = gen_random_uuid() WHERE uuid IS NULL;
+    ALTER TABLE servers ALTER COLUMN uuid SET NOT NULL;
+  `);
+
+  await db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_servers_uuid ON servers(uuid);
+  `);
+
+  await db.query(`
     CREATE TABLE IF NOT EXISTS pxe_config (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
@@ -81,8 +109,15 @@ export async function initDatabase(): Promise<void> {
   `);
 
   await db.query(`
+    CREATE TABLE IF NOT EXISTS iso_files (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      file_name TEXT NOT NULL UNIQUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS iso_entries (
-      id SERIAL PRIMARY KEY,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       iso_name TEXT NOT NULL UNIQUE,
       label TEXT NOT NULL,
       os_type TEXT NOT NULL,
@@ -93,7 +128,7 @@ export async function initDatabase(): Promise<void> {
     );
 
     CREATE TABLE IF NOT EXISTS boot_menus (
-      id SERIAL PRIMARY KEY,
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       name TEXT NOT NULL,
       description TEXT,
       content JSONB NOT NULL,
@@ -103,7 +138,7 @@ export async function initDatabase(): Promise<void> {
     );
 
     ALTER TABLE servers 
-      ADD COLUMN IF NOT EXISTS boot_menu_id INTEGER REFERENCES boot_menus(id) ON DELETE SET NULL;
+      ADD COLUMN IF NOT EXISTS boot_menu_id UUID REFERENCES boot_menus(id) ON DELETE SET NULL;
   `);
 
   await db.query(`

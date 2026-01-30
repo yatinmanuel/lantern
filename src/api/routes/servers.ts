@@ -11,37 +11,52 @@ export const serverRoutes = Router();
 // Register a new server (called by Alpine agent on boot)
 serverRoutes.post('/register', async (req, res) => {
   try {
-    const { mac_address, ip_address, hardware_info } = req.body;
+    const { mac_address, ip_address, hardware_info, hostname } = req.body;
+    const isManual = req.body?.manual === true;
 
-    if (!mac_address) {
+    const rawMac = typeof mac_address === 'string' ? mac_address.trim() : '';
+    const macRegex = /^([0-9A-Fa-f]{2}([:-])){5}[0-9A-Fa-f]{2}$|^([0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}$/;
+    if (!rawMac) {
       return res.status(400).json({ error: 'mac_address is required' });
     }
+    if (!macRegex.test(rawMac)) {
+      return res.status(400).json({ error: 'mac_address is invalid' });
+    }
+
+    const normalizedMac = rawMac.toLowerCase();
+    const cleanHostname = typeof hostname === 'string' && hostname.trim() ? hostname.trim() : null;
 
     // Check if server already exists
-    let server = await ServerModel.findByMac(mac_address);
+    let server = await ServerModel.findByMac(normalizedMac);
     
     if (server) {
       // Update existing server
       server = await ServerModel.update(server.id, {
         ip_address: ip_address || server.ip_address,
         hardware_info: hardware_info || server.hardware_info,
-        status: 'ready',
+        hostname: cleanHostname ?? server.hostname,
+        status: isManual ? server.status : 'ready',
       });
       // Update last_seen timestamp
-      await ServerModel.updateLastSeen(server.id);
-      logger.info(`Server updated: ${mac_address}`, { ip: ip_address });
+      if (!isManual) {
+        await ServerModel.updateLastSeen(server.id);
+      }
+      logger.info(`Server updated: ${normalizedMac}`, { ip: ip_address });
     } else {
       // Create new server
       server = await ServerModel.create({
-        mac_address,
+        mac_address: normalizedMac,
         ip_address: ip_address || null,
-        hostname: null,
-        status: 'ready',
+        hostname: cleanHostname,
+        status: isManual ? 'booting' : 'ready',
         hardware_info: hardware_info || null,
+        last_seen: isManual ? null : undefined,
       });
-      // Update last_seen timestamp
-      await ServerModel.updateLastSeen(server.id);
-      logger.info(`Server registered: ${mac_address}`, { ip: ip_address });
+      if (!isManual) {
+        // Update last_seen timestamp
+        await ServerModel.updateLastSeen(server.id);
+      }
+      logger.info(`Server registered: ${normalizedMac}`, { ip: ip_address });
     }
 
     const { source, created_by, meta } = buildJobMeta(req);
@@ -49,10 +64,10 @@ serverRoutes.post('/register', async (req, res) => {
       type: 'clients.register',
       category: 'clients',
       status: 'completed',
-      message: `Client registered ${mac_address}`,
+      message: `Client registered ${normalizedMac}`,
       source,
       created_by,
-      payload: { mac_address, ip_address, hardware_info, meta },
+      payload: { mac_address: normalizedMac, ip_address, hardware_info, hostname: cleanHostname, manual: isManual, meta },
       target_type: 'client',
       target_id: String(server.id),
     });
@@ -72,75 +87,6 @@ serverRoutes.get('/', async (_req, res) => {
   } catch (error) {
     logger.error('Error fetching servers:', error);
     return res.status(500).json({ error: 'Failed to fetch servers' });
-  }
-});
-
-// Get stale servers (servers that haven't been seen recently)
-// MUST come before /:mac route to avoid route conflict
-serverRoutes.get('/stale', async (req, res) => {
-  try {
-    const timeoutSeconds = parseInt(req.query.timeout as string || '30', 10);
-    const staleServers = await ServerModel.findStaleServers(timeoutSeconds);
-    return res.json({
-      count: staleServers.length,
-      servers: staleServers,
-      timeout_seconds: timeoutSeconds,
-    });
-  } catch (error) {
-    logger.error('Error fetching stale servers:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return res.status(500).json({ 
-      error: 'Failed to fetch stale servers',
-      details: errorMessage,
-      stack: error instanceof Error ? error.stack : undefined
-    });
-  }
-});
-
-// Manually trigger cleanup of stale servers
-// MUST come before /:mac route to avoid route conflict
-serverRoutes.post('/cleanup', async (req, res) => {
-  try {
-    const timeoutSeconds = parseInt(req.body.timeout || process.env.CLEANUP_TIMEOUT_SECONDS || '30', 10);
-    const staleServers = await ServerModel.findStaleServers(timeoutSeconds);
-    
-    const deleted: string[] = [];
-    const failed: string[] = [];
-
-    for (const server of staleServers) {
-      const result = await ServerModel.delete(server.id);
-      if (result) {
-        deleted.push(server.mac_address);
-        logger.info(`Manually removed stale server: ${server.mac_address} (last seen: ${server.last_seen})`);
-      } else {
-        failed.push(server.mac_address);
-      }
-    }
-
-    const { source, created_by, meta } = buildJobMeta(req);
-    await recordJob({
-      type: 'clients.cleanup',
-      category: 'clients',
-      status: 'completed',
-      message: 'Cleanup stale clients',
-      source,
-      created_by,
-      payload: { deleted, failed, timeoutSeconds, meta },
-      target_type: 'client',
-      target_id: 'cleanup',
-    });
-
-    return res.json({
-      success: true,
-      deleted_count: deleted.length,
-      failed_count: failed.length,
-      deleted: deleted,
-      failed: failed,
-      timeout_seconds: timeoutSeconds,
-    });
-  } catch (error) {
-    logger.error('Error during manual cleanup:', error);
-    return res.status(500).json({ error: 'Failed to cleanup stale servers' });
   }
 });
 

@@ -2,7 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import { Job } from '../database/job-models.js';
-import { IsoModel, ServerModel, TaskModel, PXEConfigModel, BootMenuModel } from '../database/models.js';
+import { IsoModel, IsoFileModel, ServerModel, TaskModel, PXEConfigModel, BootMenuModel } from '../database/models.js';
 import { UserModel, RoleModel, PermissionModel } from '../database/user-models.js';
 import { logger } from '../utils/logger.js';
 import { generateIpxeMenu } from '../utils/ipxe.js';
@@ -29,6 +29,7 @@ async function cleanupFailedIso(filePath: string): Promise<void> {
   await fsp.rm(filePath, { force: true });
   await fsp.rm(destDir, { recursive: true, force: true });
   await IsoModel.deleteByIsoName(fileName);
+  await IsoFileModel.deleteByName(fileName);
 }
 
 async function handleImagesImport(job: Job): Promise<Record<string, any>> {
@@ -179,6 +180,7 @@ async function handleImagesDownload(job: Job): Promise<Record<string, any>> {
     if (existingEntry) {
       throw new Error('Image already exists');
     }
+    await IsoFileModel.upsertByName(safeName);
     await appendJobLog(job.id, `Found existing ISO on disk: ${safeName}`);
     const addJob = await enqueueJob({
       type: 'images.add',
@@ -213,6 +215,7 @@ async function handleImagesDownload(job: Job): Promise<Record<string, any>> {
     void appendJobLog(job.id, message).catch(() => {});
   });
   await appendJobLog(job.id, `Download complete: ${safeName}`);
+  await IsoFileModel.upsertByName(safeName);
   const addJob = await enqueueJob({
     type: 'images.add',
     category: 'images',
@@ -312,6 +315,7 @@ async function handleImagesRemote(job: Job): Promise<Record<string, any>> {
 
   try {
     await downloadIsoFromUrl(url, targetPath);
+    await IsoFileModel.upsertByName(safeName);
     const result = await processIsoFile(targetPath, { label: job.payload?.label });
     return { fileName: safeName, entry: result.entry };
   } catch (error) {
@@ -339,10 +343,13 @@ async function handleImagesDelete(job: Job): Promise<Record<string, any>> {
   if (name.startsWith('manual:')) {
     const safeLabel = sanitizeName(name.slice('manual:'.length));
     const manualDir = path.join(isoDir, 'manual', safeLabel);
+    const isoName = `manual:${safeLabel}`;
+    const existingEntry = await IsoModel.findByIsoName(isoName);
     await fsp.rm(manualDir, { recursive: true, force: true });
-    await IsoModel.deleteByIsoName(`manual:${safeLabel}`);
+    await IsoModel.deleteByIsoName(isoName);
+    await BootMenuModel.removeIsoReferences({ isoId: existingEntry?.id, isoName });
     await generateIpxeMenu();
-    return { deleted: `manual:${safeLabel}` };
+    return { deleted: isoName };
   }
 
   const fileName = path.basename(name);
@@ -352,9 +359,12 @@ async function handleImagesDelete(job: Job): Promise<Record<string, any>> {
 
   const filePath = path.join(isoDir, fileName);
   const destDir = path.join(isoDir, fileName.replace(/\.iso$/i, ''));
+  const existingEntry = await IsoModel.findByIsoName(fileName);
   await fsp.rm(filePath, { force: true });
   await fsp.rm(destDir, { recursive: true, force: true });
   await IsoModel.deleteByIsoName(fileName);
+  await IsoFileModel.deleteByName(fileName);
+  await BootMenuModel.removeIsoReferences({ isoId: existingEntry?.id, isoName: fileName });
   await generateIpxeMenu();
   return { deleted: fileName };
 }
@@ -766,11 +776,12 @@ async function handleMenuDelete(job: Job): Promise<Record<string, any>> {
 
 async function handleClientAssignMenu(job: Job): Promise<Record<string, any>> {
   const payload = job.payload || {};
-  if (!payload.clientId) throw new Error('Client ID is required');
+  const serverId = payload.clientId ?? payload.serverId;
+  if (!serverId) throw new Error('Client ID is required');
   // menuId can be null to unassign
   const menuId = payload.menuId === undefined ? null : payload.menuId;
 
-  const server = await ServerModel.update(payload.clientId, {
+  const server = await ServerModel.update(serverId, {
     boot_menu_id: menuId
   });
   

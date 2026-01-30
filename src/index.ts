@@ -1,7 +1,6 @@
 import { initDatabase, closeDatabase } from './database/index.js';
 import { migrateDefaultMenu } from './database/migration.js';
 import { createServer } from './api/server.js';
-import { ServerCleanupService } from './utils/cleanup.js';
 import { natsManager } from './utils/nats-manager.js';
 import { logger } from './utils/logger.js';
 import { generateIpxeMenu } from './utils/ipxe.js';
@@ -11,10 +10,6 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const PORT = process.env.PORT || 3000;
-const CLEANUP_TIMEOUT_SECONDS = parseInt(process.env.CLEANUP_TIMEOUT_SECONDS || '1800', 10); // 30 minutes
-const CLEANUP_CHECK_INTERVAL_SECONDS = parseInt(process.env.CLEANUP_CHECK_INTERVAL_SECONDS || '30', 10);
-
-let cleanupService: ServerCleanupService | null = null;
 
 async function main() {
   try {
@@ -57,19 +52,9 @@ async function main() {
       logger.info(`PXE Server listening on port ${PORT}`);
     });
 
-    // Start cleanup service
-    cleanupService = new ServerCleanupService(
-      CLEANUP_TIMEOUT_SECONDS,
-      CLEANUP_CHECK_INTERVAL_SECONDS
-    );
-    cleanupService.start();
-
     // Graceful shutdown
     const shutdown = async () => {
       logger.info('Shutting down gracefully...');
-      if (cleanupService) {
-        cleanupService.stop();
-      }
       await stopJobNotifications();
       await natsManager.disconnect();
       server.close(() => {

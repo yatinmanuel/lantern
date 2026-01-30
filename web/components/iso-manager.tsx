@@ -91,6 +91,8 @@ export function IsoManager() {
   const [manageInitrdPath, setManageInitrdPath] = useState('');
   const [manageBootArgs, setManageBootArgs] = useState('');
   const [manageSaving, setManageSaving] = useState(false);
+  const [manageIsoName, setManageIsoName] = useState('');
+  const [manageIsoSaving, setManageIsoSaving] = useState(false);
 
   useEffect(() => {
     loadIsos();
@@ -484,8 +486,41 @@ export function IsoManager() {
     }
   }
 
+  async function handleRenameIso() {
+    if (!manageItem || manageItem.kind !== 'iso') return;
+    const nextName = manageIsoName.trim();
+    if (!nextName) {
+      setIsoMessage('Enter a new ISO file name.');
+      return;
+    }
+    try {
+      setManageIsoSaving(true);
+      const response = await isoApi.rename(manageItem.data.id, nextName);
+      if (response?.file?.name) {
+        setManageItem({
+          kind: 'iso',
+          data: {
+            ...manageItem.data,
+            name: response.file.name,
+            id: response.file.id,
+          },
+        });
+        setManageIsoName(response.file.name);
+      }
+      setIsoMessage('ISO rename complete.');
+      await loadIsos({ showLoading: false, silent: true });
+      await loadImages({ showLoading: false, silent: true });
+    } catch (error) {
+      console.error('Failed to rename ISO:', error);
+      setIsoMessage(error instanceof Error ? error.message : 'Failed to rename ISO.');
+    } finally {
+      setManageIsoSaving(false);
+    }
+  }
+
   function openManageIso(item: IsoDisplay) {
     setManageItem({ kind: 'iso', data: item });
+    setManageIsoName(item.name);
     setManageOpen(true);
   }
 
@@ -1054,9 +1089,9 @@ export function IsoManager() {
                               >
                               <option value="">Select an ISO...</option>
                               {isoFiles
-                                .filter((file) => file.id.toLowerCase().endsWith('.iso'))
+                                .filter((file) => file.name.toLowerCase().endsWith('.iso'))
                                 .map((file) => (
-                                  <option key={file.id} value={file.id}>
+                                  <option key={file.id} value={file.name}>
                                     {file.name}
                                   </option>
                                 ))}
@@ -1196,6 +1231,8 @@ export function IsoManager() {
             setManageOpen(open);
             if (!open) {
               setManageItem(null);
+              setManageIsoName('');
+              setManageIsoSaving(false);
             }
           }}
         >
@@ -1239,6 +1276,24 @@ export function IsoManager() {
                     <span className="font-medium col-span-2 text-right truncate" title={manageItem.data.name}>
                       {manageItem.data.name}
                     </span>
+                  </div>
+                  <div className="space-y-2 py-2 border-b border-border/50">
+                    <Label>Rename ISO</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={manageIsoName}
+                        onChange={(e) => setManageIsoName(e.target.value)}
+                        placeholder="new-name.iso"
+                      />
+                      <Button
+                        variant="secondary"
+                        onClick={handleRenameIso}
+                        disabled={manageIsoSaving || !manageIsoName.trim()}
+                      >
+                        {manageIsoSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Rename
+                      </Button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-3 gap-2 py-2 border-b border-border/50">
                     <span className="text-muted-foreground col-span-1">Size</span>

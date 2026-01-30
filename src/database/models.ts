@@ -2,12 +2,14 @@ import { getPool } from './index.js';
 
 export interface Server {
   id: number;
+  uuid: string;
   mac_address: string;
   ip_address: string | null;
   hostname: string | null;
   status: 'booting' | 'ready' | 'installing' | 'installed' | 'error';
   hardware_info: Record<string, any> | null;
-  last_seen: string;
+  boot_menu_id?: string | null;
+  last_seen: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -43,7 +45,7 @@ export interface PXEConfig {
 }
 
 export interface IsoEntry {
-  id: number;
+  id: string;
   iso_name: string;
   label: string;
   os_type: string;
@@ -53,20 +55,29 @@ export interface IsoEntry {
   created_at: string;
 }
 
+export interface IsoFile {
+  id: string;
+  file_name: string;
+  created_at: string;
+  updated_at: string;
+}
+
 function mapServer(row: any): Server {
   return {
     ...row,
     hardware_info: row.hardware_info ?? null,
-    last_seen: row.last_seen || row.created_at,
+    last_seen: row.last_seen ?? null,
   } as Server;
 }
 
 export const ServerModel = {
-  async create(server: Omit<Server, 'id' | 'created_at' | 'updated_at' | 'last_seen'>): Promise<Server> {
+  async create(
+    server: Omit<Server, 'id' | 'uuid' | 'created_at' | 'updated_at'> & { last_seen?: string | null }
+  ): Promise<Server> {
     const db = getPool();
     const result = await db.query(
       `INSERT INTO servers (mac_address, ip_address, hostname, status, hardware_info, last_seen)
-       VALUES ($1, $2, $3, $4, $5, NOW())
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
       [
         server.mac_address,
@@ -74,6 +85,7 @@ export const ServerModel = {
         server.hostname,
         server.status,
         server.hardware_info,
+        server.last_seen ?? new Date().toISOString(),
       ]
     );
     return mapServer(result.rows[0]);
@@ -81,7 +93,7 @@ export const ServerModel = {
 
   async findByMac(macAddress: string): Promise<Server | null> {
     const db = getPool();
-    const result = await db.query('SELECT * FROM servers WHERE mac_address = $1', [macAddress]);
+    const result = await db.query('SELECT * FROM servers WHERE lower(mac_address) = lower($1)', [macAddress]);
     if (result.rows.length === 0) return null;
     return mapServer(result.rows[0]);
   },
@@ -114,6 +126,14 @@ export const ServerModel = {
     if (updates.hardware_info !== undefined) {
       fields.push(`hardware_info = $${idx++}`);
       values.push(updates.hardware_info);
+    }
+    if (updates.boot_menu_id !== undefined) {
+      fields.push(`boot_menu_id = $${idx++}`);
+      values.push(updates.boot_menu_id);
+    }
+    if (updates.last_seen !== undefined) {
+      fields.push(`last_seen = $${idx++}`);
+      values.push(updates.last_seen);
     }
 
     if (fields.length === 0) {
@@ -150,20 +170,9 @@ export const ServerModel = {
 
   async updateLastSeenByMac(macAddress: string): Promise<void> {
     const db = getPool();
-    await db.query('UPDATE servers SET last_seen = NOW() WHERE mac_address = $1', [macAddress]);
+    await db.query('UPDATE servers SET last_seen = NOW() WHERE lower(mac_address) = lower($1)', [macAddress]);
   },
 
-  async findStaleServers(timeoutSeconds: number): Promise<Server[]> {
-    const db = getPool();
-    const threshold = new Date(Date.now() - timeoutSeconds * 1000).toISOString();
-    const result = await db.query(
-      `SELECT * FROM servers
-       WHERE last_seen IS NULL OR last_seen < $1
-       ORDER BY COALESCE(last_seen, created_at) ASC`,
-      [threshold]
-    );
-    return result.rows.map(mapServer);
-  },
 };
 
 export const TaskModel = {
@@ -356,6 +365,13 @@ export const IsoModel = {
     return result.rows[0] as IsoEntry;
   },
 
+  async findById(id: string): Promise<IsoEntry | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM iso_entries WHERE id = $1', [id]);
+    if (result.rows.length === 0) return null;
+    return result.rows[0] as IsoEntry;
+  },
+
   async getAll(): Promise<IsoEntry[]> {
     const db = getPool();
     const result = await db.query('SELECT * FROM iso_entries ORDER BY created_at DESC');
@@ -367,10 +383,108 @@ export const IsoModel = {
     const result = await db.query('DELETE FROM iso_entries WHERE iso_name = $1', [isoName]);
     return (result.rowCount ?? 0) > 0;
   },
+
+  async deleteById(id: string): Promise<boolean> {
+    const db = getPool();
+    const result = await db.query('DELETE FROM iso_entries WHERE id = $1', [id]);
+    return (result.rowCount ?? 0) > 0;
+  },
+
+  async updateByIsoName(
+    isoName: string,
+    updates: Partial<Pick<IsoEntry, 'iso_name' | 'kernel_path' | 'initrd_items' | 'boot_args'>>
+  ): Promise<IsoEntry | null> {
+    const db = getPool();
+    const fields: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+
+    if (updates.iso_name !== undefined) {
+      fields.push(`iso_name = $${idx++}`);
+      values.push(updates.iso_name);
+    }
+    if (updates.kernel_path !== undefined) {
+      fields.push(`kernel_path = $${idx++}`);
+      values.push(updates.kernel_path);
+    }
+    if (updates.initrd_items !== undefined) {
+      fields.push(`initrd_items = $${idx++}`);
+      values.push(JSON.stringify(updates.initrd_items));
+    }
+    if (updates.boot_args !== undefined) {
+      fields.push(`boot_args = $${idx++}`);
+      values.push(updates.boot_args);
+    }
+
+    if (fields.length === 0) {
+      return this.findByIsoName(isoName);
+    }
+
+    values.push(isoName);
+    const result = await db.query(
+      `UPDATE iso_entries SET ${fields.join(', ')} WHERE iso_name = $${idx} RETURNING *`,
+      values
+    );
+    return (result.rows[0] as IsoEntry) || null;
+  },
+};
+
+export const IsoFileModel = {
+  async upsertByName(fileName: string): Promise<IsoFile> {
+    const db = getPool();
+    const result = await db.query(
+      `INSERT INTO iso_files (file_name, updated_at)
+       VALUES ($1, NOW())
+       ON CONFLICT (file_name) DO UPDATE SET
+         updated_at = NOW()
+       RETURNING *`,
+      [fileName]
+    );
+    return result.rows[0] as IsoFile;
+  },
+
+  async findById(id: string): Promise<IsoFile | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM iso_files WHERE id = $1', [id]);
+    return (result.rows[0] as IsoFile) || null;
+  },
+
+  async findByName(fileName: string): Promise<IsoFile | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM iso_files WHERE file_name = $1', [fileName]);
+    return (result.rows[0] as IsoFile) || null;
+  },
+
+  async getAll(): Promise<IsoFile[]> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM iso_files ORDER BY created_at DESC');
+    return result.rows as IsoFile[];
+  },
+
+  async rename(id: string, fileName: string): Promise<IsoFile | null> {
+    const db = getPool();
+    const result = await db.query(
+      `UPDATE iso_files SET file_name = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [fileName, id]
+    );
+    return (result.rows[0] as IsoFile) || null;
+  },
+
+  async deleteById(id: string): Promise<boolean> {
+    const db = getPool();
+    const result = await db.query('DELETE FROM iso_files WHERE id = $1', [id]);
+    return (result.rowCount ?? 0) > 0;
+  },
+
+  async deleteByName(fileName: string): Promise<boolean> {
+    const db = getPool();
+    const result = await db.query('DELETE FROM iso_files WHERE file_name = $1', [fileName]);
+    return (result.rowCount ?? 0) > 0;
+  },
 };
 
 export interface BootMenu {
-  id: number;
+  id: string;
   name: string;
   description: string | null;
   content: Record<string, any>[];
@@ -394,7 +508,7 @@ export const BootMenuModel = {
     return result.rows[0] as BootMenu;
   },
 
-  async update(id: number, updates: Partial<BootMenu>): Promise<BootMenu> {
+  async update(id: string, updates: Partial<BootMenu>): Promise<BootMenu> {
     const db = getPool();
     const fields: string[] = [];
     const values: any[] = [];
@@ -435,7 +549,7 @@ export const BootMenuModel = {
     return result.rows[0] as BootMenu;
   },
 
-  async findById(id: number): Promise<BootMenu | null> {
+  async findById(id: string): Promise<BootMenu | null> {
     const db = getPool();
     const result = await db.query('SELECT * FROM boot_menus WHERE id = $1', [id]);
     return (result.rows[0] as BootMenu) || null;
@@ -453,9 +567,38 @@ export const BootMenuModel = {
     return result.rows as BootMenu[];
   },
 
-  async delete(id: number): Promise<boolean> {
+  async delete(id: string): Promise<boolean> {
     const db = getPool();
     const result = await db.query('DELETE FROM boot_menus WHERE id = $1', [id]);
     return (result.rowCount ?? 0) > 0;
+  },
+
+  async removeIsoReferences(params: { isoId?: string | null; isoName?: string | null }): Promise<{ updated: number }> {
+    const { isoId, isoName } = params;
+    if (!isoId && !isoName) {
+      return { updated: 0 };
+    }
+
+    const menus = await this.getAll();
+    let updated = 0;
+
+    await Promise.all(
+      menus.map(async (menu) => {
+        const content = Array.isArray(menu.content) ? menu.content : [];
+        const nextContent = content.filter((item: any) => {
+          if (!item || item.type !== 'iso') return true;
+          if (isoId && item.isoId === isoId) return false;
+          if (isoName && item.isoName === isoName) return false;
+          return true;
+        });
+
+        if (nextContent.length !== content.length) {
+          updated += 1;
+          await this.update(menu.id, { content: nextContent });
+        }
+      })
+    );
+
+    return { updated };
   },
 };

@@ -41,7 +41,7 @@ export class SSEManager {
       if (this.connections.has(macAddress)) {
         try {
           res.write(': heartbeat\n\n');
-          // Update last_seen timestamp to prevent stale server cleanup
+          // Update last_seen timestamp for presence tracking
           void ServerModel.updateLastSeenByMac(macAddress).catch((error) => {
             logger.warn(`Failed to update last_seen for ${macAddress}:`, error);
           });

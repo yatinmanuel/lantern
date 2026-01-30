@@ -5,13 +5,23 @@ import { Server, Cpu, HardDrive, MemoryStick } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { api, Server as ServerType } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
-const statusColors = {
-  ready: 'bg-green-100 text-green-800 border-green-200',
-  booting: 'bg-blue-100 text-blue-800 border-blue-200',
-  installing: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-  installed: 'bg-purple-100 text-purple-800 border-purple-200',
-  error: 'bg-red-100 text-red-800 border-red-200',
-};
+
+const ONLINE_THRESHOLD_MS = 60 * 1000;
+const STANDBY_THRESHOLD_MS = 5 * 60 * 1000;
+
+function getPresence(lastSeen?: string) {
+  if (!lastSeen) {
+    return { label: 'offline', dotClass: 'bg-muted-foreground/50', textClass: 'text-muted-foreground', pulse: false };
+  }
+  const diff = Date.now() - new Date(lastSeen).getTime();
+  if (diff <= ONLINE_THRESHOLD_MS) {
+    return { label: 'online', dotClass: 'bg-emerald-500', textClass: 'text-emerald-400', pulse: true };
+  }
+  if (diff <= STANDBY_THRESHOLD_MS) {
+    return { label: 'standby', dotClass: 'bg-amber-400', textClass: 'text-amber-300', pulse: true };
+  }
+  return { label: 'offline', dotClass: 'bg-muted-foreground/50', textClass: 'text-muted-foreground', pulse: false };
+}
 
 export default function DashboardPage() {
   const [servers, setServers] = useState<ServerType[]>([]);
@@ -140,9 +150,19 @@ export default function DashboardPage() {
                           )}
                         </div>
                       )}
-                      <Badge className={statusColors[server.status]}>
-                        {server.status}
-                      </Badge>
+                      {(() => {
+                        const presence = getPresence(server.last_seen);
+                        return (
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`h-2.5 w-2.5 rounded-full ${presence.dotClass} ${presence.pulse ? 'animate-pulse' : ''}`}
+                            />
+                            <Badge variant="secondary" className="capitalize">
+                              {presence.label}
+                            </Badge>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 ))}

@@ -26,7 +26,6 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
-  ContextMenuLabel,
   ContextMenuSeparator,
   ContextMenuSub,
   ContextMenuSubContent,
@@ -34,14 +33,16 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 import { MenuItemRow } from './menu-item-row';
-import { Plus } from 'lucide-react';
+import { Plus, Heading, Type, Minus, Image as ImageIcon, Save } from 'lucide-react';
 
 interface MenuEditorProps {
   menu: BootMenu;
   onItemsChange?: (items: BootMenuContentItem[]) => void;
+  onSave?: () => void;
+  isSaving?: boolean;
 }
 
-export function MenuEditor({ menu, onItemsChange }: MenuEditorProps) {
+export function MenuEditor({ menu, onItemsChange, onSave, isSaving }: MenuEditorProps) {
   // We add a unique ID to each item for dnd-kit stability, in real app we might use UUIDs
   // For now we will map index to a stable ID if easier, but dnd-kit prefers stable IDs.
   // We can generate temporary IDs for the session.
@@ -104,71 +105,101 @@ export function MenuEditor({ menu, onItemsChange }: MenuEditorProps) {
      setItems(prev => prev.filter(item => item._id !== id));
   }
 
+  function openAddMenu() {
+    const button = addButtonRef.current;
+    if (!button) return;
+    const rect = button.getBoundingClientRect();
+    const contextEvent = new MouseEvent('contextmenu', {
+      bubbles: true,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.bottom + 4,
+    });
+    button.dispatchEvent(contextEvent);
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Editor Area */}
       <div className="flex-1 min-h-0 flex flex-col p-6 bg-transparent">
-         <div className="flex items-center justify-between mb-4 shrink-0">
+         <div className="flex items-center justify-between mb-4 shrink-0 pl-4 pr-3">
             <h3 className="font-medium text-sm text-muted-foreground uppercase tracking-wider">Menu Items</h3>
 
-            <ContextMenu>
-               <ContextMenuTrigger asChild>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      const button = addButtonRef.current;
-                      if (!button) return;
-                      const rect = button.getBoundingClientRect();
-                      const contextEvent = new MouseEvent('contextmenu', {
-                        bubbles: true,
-                        clientX: rect.left + rect.width / 2,
-                        clientY: rect.bottom + 4,
-                      });
-                      button.dispatchEvent(contextEvent);
-                    }}
-                    className="inline-flex items-center"
-                    ref={addButtonRef}
-                  >
-                    <Plus className="mr-2 h-4 w-4" /> Add Item
-                  </Button>
-               </ContextMenuTrigger>
-               <ContextMenuContent align="end" className="w-56">
-                  <ContextMenuLabel>Add Menu Item</ContextMenuLabel>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem onSelect={() => addItem('header')}>Header</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => addItem('text')}>Text</ContextMenuItem>
-                  <ContextMenuItem onSelect={() => addItem('separator')}>Separator</ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuSub>
-                     <ContextMenuSubTrigger>ISO Image</ContextMenuSubTrigger>
-                     <ContextMenuSubContent className="max-h-64 overflow-y-auto">
-                        {isos.length === 0 ? (
-                          <ContextMenuItem disabled>No ISOs available</ContextMenuItem>
-                        ) : (
-                          isos.map((iso) => (
-                            <ContextMenuItem
-                              key={iso.id}
-                              onSelect={() =>
-                                addItem('iso', {
-                                  isoId: Number(iso.id),
-                                  isoName: iso.name,
-                                  label: iso.entry?.label || iso.name,
-                                })
-                              }
-                            >
-                              {iso.entry?.label || iso.name}
-                            </ContextMenuItem>
-                          ))
-                        )}
-                     </ContextMenuSubContent>
-                  </ContextMenuSub>
-               </ContextMenuContent>
-            </ContextMenu>
+            <div className="flex items-center gap-2">
+              <ContextMenu>
+                 <ContextMenuTrigger asChild>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        openAddMenu();
+                      }}
+                      className="h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-transparent"
+                      ref={addButtonRef}
+                      aria-label="Add menu item"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                 </ContextMenuTrigger>
+                 <ContextMenuContent align="end" className="w-64 p-2">
+                    <ContextMenuItem onSelect={() => addItem('header')} className="gap-2">
+                      <Heading className="h-4 w-4 text-muted-foreground" />
+                      <span>Section Header</span>
+                    </ContextMenuItem>
+                    <ContextMenuItem onSelect={() => addItem('text')} className="gap-2">
+                      <Type className="h-4 w-4 text-muted-foreground" />
+                      <span>Text Label</span>
+                    </ContextMenuItem>
+                    <ContextMenuItem onSelect={() => addItem('separator')} className="gap-2">
+                      <Minus className="h-4 w-4 text-muted-foreground" />
+                      <span>Divider</span>
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuSub>
+                       <ContextMenuSubTrigger>
+                         <div className="flex items-center gap-2">
+                           <ImageIcon className="h-4 w-4 text-muted-foreground" />
+                           <span>ISO Image</span>
+                         </div>
+                       </ContextMenuSubTrigger>
+                       <ContextMenuSubContent className="max-h-64 overflow-y-auto p-1">
+                          {isos.length === 0 ? (
+                            <ContextMenuItem disabled>No ISOs available</ContextMenuItem>
+                          ) : (
+                            isos.map((iso) => (
+                              <ContextMenuItem
+                                key={iso.id}
+                                onSelect={() =>
+                                  addItem('iso', {
+                                    isoId: iso.entry?.id,
+                                    isoName: iso.name,
+                                    label: iso.entry?.label || iso.name,
+                                  })
+                                }
+                              >
+                                {iso.entry?.label || iso.name}
+                              </ContextMenuItem>
+                            ))
+                          )}
+                       </ContextMenuSubContent>
+                    </ContextMenuSub>
+                 </ContextMenuContent>
+              </ContextMenu>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-transparent"
+                onClick={() => onSave?.()}
+                disabled={!onSave || isSaving}
+                aria-label="Save menu"
+                title="Save menu"
+              >
+                <Save className="h-4 w-4" />
+              </Button>
+            </div>
          </div>
 
-         <ScrollArea className="flex-1 min-h-0 pr-4">
+         <ScrollArea className="flex-1 min-h-0">
             <DndContext 
                sensors={sensors} 
                collisionDetection={closestCenter} 
@@ -179,7 +210,7 @@ export function MenuEditor({ menu, onItemsChange }: MenuEditorProps) {
                   items={items.map(i => i._id)} 
                   strategy={verticalListSortingStrategy}
                >
-                  <div className="space-y-2 pb-6">
+                  <div className="space-y-2 pb-6 pl-4 pr-3">
                      {items.map((item) => (
                         <MenuItemRow 
                            key={item._id} 
@@ -189,12 +220,17 @@ export function MenuEditor({ menu, onItemsChange }: MenuEditorProps) {
                            onChange={(u) => updateItem(item._id, u)}
                         />
                      ))}
-                     {items.length === 0 && (
-                        <div className="border-2 border-dashed rounded-lg p-12 flex flex-col items-center justify-center text-muted-foreground opacity-50">
-                           <p>Menu is empty</p>
-                           <p className="text-xs">Add items to build your menu</p>
-                        </div>
-                     )}
+                     <button
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          openAddMenu();
+                        }}
+                        className="mt-2 w-full flex items-center justify-center gap-2 rounded-md border-2 border-dashed border-border px-3 py-3 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-foreground/60 bg-muted/20"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Add menu item
+                      </button>
                   </div>
                </SortableContext>
             </DndContext>

@@ -4,7 +4,7 @@ import fsp from 'fs/promises';
 import path from 'path';
 import multer from 'multer';
 import { URL } from 'url';
-import { IsoModel } from '../../database/models.js';
+import { IsoModel, IsoFileModel, BootMenuModel } from '../../database/models.js';
 import { logger } from '../../utils/logger.js';
 import { AuthRequest, requireAuth, requirePermission } from '../../utils/auth.js';
 import { getParamValue } from '../../utils/params.js';
@@ -98,18 +98,26 @@ isoRoutes.get('/', requireAuth, requirePermission('config.view'), async (_req: A
 
     const isoEntries = await IsoModel.getAll();
     const entryMap = new Map(isoEntries.map(entry => [entry.iso_name, entry]));
+    const isoRecords = await IsoFileModel.getAll();
+    const recordMap = new Map(isoRecords.map(record => [record.file_name, record]));
     const baseUrl = await getBaseUrl();
 
-    const fileItems = files
+    const seen = new Set<string>();
+    const fileItems = await Promise.all(files
       .filter(file => file.name.toLowerCase().endsWith('.iso'))
-      .map(file => {
+      .map(async (file) => {
+        let record = recordMap.get(file.name);
+        if (!record) {
+          record = await IsoFileModel.upsertByName(file.name);
+        }
+        seen.add(file.name);
         const entry = entryMap.get(file.name) || null;
         const baseName = file.name.replace(/\.iso$/i, '');
         const destDir = path.join(isoDir, baseName);
         const extractedMarker = path.join(destDir, '.lantern-extracted');
         const extracted = fs.existsSync(extractedMarker) || fs.existsSync(destDir);
         return {
-          id: file.name,
+          id: record.id,
           name: file.name,
           size: file.size,
           modified_at: file.modified_at,
@@ -117,7 +125,12 @@ isoRoutes.get('/', requireAuth, requirePermission('config.view'), async (_req: A
           extracted,
           entry,
         };
-      });
+      }));
+
+    const staleRecords = isoRecords.filter(record => !seen.has(record.file_name));
+    if (staleRecords.length > 0) {
+      await Promise.all(staleRecords.map(record => IsoFileModel.deleteById(record.id)));
+    }
 
     const items = fileItems.sort((a, b) =>
       b.modified_at.localeCompare(a.modified_at)
@@ -227,6 +240,7 @@ isoRoutes.post('/', requireAuth, requirePermission('config.edit'), (req: AuthReq
     const label = typeof (req.body as any)?.label === 'string' ? (req.body as any).label.trim() : '';
 
     try {
+      await IsoFileModel.upsertByName(file.filename);
       const { source, created_by, meta } = buildJobMeta(req);
       const job = await enqueueJob({
         type: 'images.add',
@@ -441,12 +455,108 @@ isoRoutes.post('/scan', requireAuth, requirePermission('config.edit'), async (re
   }
 });
 
-isoRoutes.delete('/:name', requireAuth, requirePermission('config.edit'), async (req: AuthRequest, res: Response) => {
+isoRoutes.patch('/:id', requireAuth, requirePermission('config.edit'), async (req: AuthRequest, res: Response) => {
   try {
-    const rawName = getParamValue(req.params.name);
-    if (!rawName) {
-      return res.status(400).json({ error: 'Missing ISO name' });
+    const rawId = getParamValue(req.params.id);
+    if (!rawId) {
+      return res.status(400).json({ error: 'Missing ISO id' });
     }
+    const nextNameRaw = typeof req.body?.file_name === 'string' ? req.body.file_name.trim() : '';
+    if (!nextNameRaw) {
+      return res.status(400).json({ error: 'file_name is required' });
+    }
+    const safeBase = sanitizeName(path.basename(nextNameRaw));
+    if (!safeBase) {
+      return res.status(400).json({ error: 'Invalid file name' });
+    }
+    const nextName = safeBase.toLowerCase().endsWith('.iso') ? safeBase : `${safeBase}.iso`;
+
+    const isoFile = await IsoFileModel.findById(rawId);
+    if (!isoFile) {
+      return res.status(404).json({ error: 'ISO not found' });
+    }
+
+    if (isoFile.file_name === nextName) {
+      return res.json({ renamed: false, file: isoFile });
+    }
+
+    const isoDir = await getIsoDir();
+    const oldName = isoFile.file_name;
+    const oldPath = path.join(isoDir, oldName);
+    const newPath = path.join(isoDir, nextName);
+    if (!fs.existsSync(oldPath)) {
+      return res.status(404).json({ error: 'ISO file not found on disk' });
+    }
+    if (fs.existsSync(newPath)) {
+      return res.status(409).json({ error: 'Target file name already exists' });
+    }
+
+    await fsp.rename(oldPath, newPath);
+
+    const oldBase = oldName.replace(/\.iso$/i, '');
+    const newBase = nextName.replace(/\.iso$/i, '');
+    const oldDir = path.join(isoDir, oldBase);
+    const newDir = path.join(isoDir, newBase);
+    if (fs.existsSync(oldDir)) {
+      await fsp.rename(oldDir, newDir);
+    }
+
+    const oldIsoPath = `/iso/${encodeURIComponent(oldBase)}`;
+    const newIsoPath = `/iso/${encodeURIComponent(newBase)}`;
+    const replaceIsoPath = (value?: string | null) =>
+      value ? value.split(oldIsoPath).join(newIsoPath) : value ?? null;
+
+    const existingEntry = await IsoModel.findByIsoName(oldName);
+    if (existingEntry) {
+      const updatedInitrd = (existingEntry.initrd_items || []).map((item) => ({
+        ...item,
+        path: replaceIsoPath(item.path) || item.path,
+      }));
+      await IsoModel.updateByIsoName(oldName, {
+        iso_name: nextName,
+        kernel_path: replaceIsoPath(existingEntry.kernel_path) || existingEntry.kernel_path,
+        initrd_items: updatedInitrd,
+        boot_args: replaceIsoPath(existingEntry.boot_args ?? undefined),
+      });
+
+      const menus = await BootMenuModel.getAll();
+      await Promise.all(
+        menus.map(async (menu) => {
+          const nextContent = (menu.content || []).map((item: any) => {
+            if (item?.type === 'iso' && item.isoName === oldName) {
+              return { ...item, isoName: nextName };
+            }
+            return item;
+          });
+          if (JSON.stringify(nextContent) !== JSON.stringify(menu.content || [])) {
+            await BootMenuModel.update(menu.id, { content: nextContent });
+          }
+        })
+      );
+    }
+
+    const updatedFile = await IsoFileModel.rename(rawId, nextName);
+    return res.json({
+      renamed: true,
+      file: updatedFile ? { id: updatedFile.id, name: updatedFile.file_name } : null,
+    });
+  } catch (error) {
+    logger.error('ISO rename failed:', error);
+    return res.status(500).json({ error: 'Failed to rename ISO' });
+  }
+});
+
+isoRoutes.delete('/:id', requireAuth, requirePermission('config.edit'), async (req: AuthRequest, res: Response) => {
+  try {
+    const rawId = getParamValue(req.params.id);
+    if (!rawId) {
+      return res.status(400).json({ error: 'Missing ISO id' });
+    }
+    const isoFile = await IsoFileModel.findById(rawId);
+    if (!isoFile) {
+      return res.status(404).json({ error: 'ISO not found' });
+    }
+    const rawName = isoFile.file_name;
 
     const { source, created_by, meta } = buildJobMeta(req);
     const job = await enqueueJob({
@@ -457,7 +567,7 @@ isoRoutes.delete('/:name', requireAuth, requirePermission('config.edit'), async 
       created_by,
       payload: { name: rawName, meta },
       target_type: 'image',
-      target_id: rawName,
+      target_id: isoFile.id,
     });
 
     return res.status(202).json({ success: true, jobId: job.id, job });

@@ -45,16 +45,17 @@ interface Server {
   mac_address: string;
   hostname?: string;
   ip_address?: string;
-  boot_menu_id?: number | null;
+  boot_menu_id?: string | null;
   status: string;
 }
 
 interface ClientOverridesPanelProps {
   menus: BootMenu[];
   variant?: 'panel' | 'sheet';
+  defaultMenuId?: string | null;
 }
 
-export function ClientOverridesPanel({ menus, variant = 'panel' }: ClientOverridesPanelProps) {
+export function ClientOverridesPanel({ menus, variant = 'panel', defaultMenuId }: ClientOverridesPanelProps) {
   const [servers, setServers] = useState<Server[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -67,6 +68,15 @@ export function ClientOverridesPanel({ menus, variant = 'panel' }: ClientOverrid
   useEffect(() => {
     loadServers();
   }, [menus]); // Reload if menus change, mainly to refresh UI but servers data is separate
+
+  useEffect(() => {
+    if (!bulkOpen) return;
+    if (bulkMenuId) return;
+    const fallback = defaultMenuId || menus.find((menu) => menu.is_default)?.id || menus[0]?.id || '';
+    if (fallback) {
+      setBulkMenuId(String(fallback));
+    }
+  }, [bulkOpen, bulkMenuId, defaultMenuId, menus]);
 
   async function loadServers() {
     try {
@@ -81,7 +91,7 @@ export function ClientOverridesPanel({ menus, variant = 'panel' }: ClientOverrid
   }
 
   async function handleAssign(serverId: number, menuId: string) {
-    const mId = menuId === 'default' ? null : parseInt(menuId, 10);
+    const mId = menuId === 'default' ? null : menuId;
     try {
       // Call assignment API
       const res = await fetch(`${apiBaseUrl}/api/boot-menus/assign`, {
@@ -112,7 +122,7 @@ export function ClientOverridesPanel({ menus, variant = 'panel' }: ClientOverrid
       return;
     }
 
-    const menuIdValue = bulkMenuId === 'default' ? null : parseInt(bulkMenuId, 10);
+    const menuIdValue = bulkMenuId === 'default' ? null : bulkMenuId;
     setBulkAssigning(true);
     try {
       await Promise.all(selected.map((server) => (

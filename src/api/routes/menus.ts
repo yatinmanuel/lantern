@@ -42,7 +42,7 @@ router.post('/', async (req, res) => {
 // Update menu (via Job)
 router.put('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = req.params.id;
     const updates = req.body;
     const { source, created_by, meta } = buildJobMeta(req);
 
@@ -66,7 +66,7 @@ router.put('/:id', async (req, res) => {
 // Delete menu (via Job)
 router.delete('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = req.params.id;
     const { source, created_by, meta } = buildJobMeta(req);
 
     const job = await enqueueJob({
@@ -98,7 +98,7 @@ router.post('/assign', async (req, res) => {
     //   await ServerModel.update(payload.serverId, { boot_menu_id: payload.menuId });
 
     const serverId = parseInt(clientId, 10);
-    const bootMenuId = menuId ? parseInt(menuId, 10) : null;
+    const bootMenuId = menuId ? String(menuId) : null;
 
     const { source, created_by, meta } = buildJobMeta(req);
 

@@ -12,6 +12,8 @@ export type IsoFile = {
   url?: string | null;
   extracted?: boolean;
   entry?: {
+    id: string;
+    iso_name: string;
     label: string;
     os_type: string;
     kernel_path?: string;
@@ -63,8 +65,8 @@ export const isoApi = {
     return res.json().catch(() => undefined);
   },
 
-  async remove(name: string): Promise<void> {
-    const res = await fetch(`${API_BASE_URL}/api/isos/${encodeURIComponent(name)}`, {
+  async remove(id: string): Promise<void> {
+    const res = await fetch(`${API_BASE_URL}/api/isos/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       credentials: 'include',
       headers: getSessionHeaders(),
@@ -73,6 +75,20 @@ export const isoApi = {
       const error = await res.json().catch(() => ({ error: 'Failed to delete image' }));
       throw new Error(error.error || 'Failed to delete image');
     }
+  },
+
+  async rename(id: string, fileName: string): Promise<{ renamed: boolean; file: { id: string; name: string } | null }> {
+    const res = await fetch(`${API_BASE_URL}/api/isos/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: withSessionHeaders({ 'Content-Type': 'application/json' }),
+      credentials: 'include',
+      body: JSON.stringify({ file_name: fileName }),
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ error: 'Failed to rename ISO' }));
+      throw new Error(error.error || 'Failed to rename ISO');
+    }
+    return res.json();
   },
 
   async uploadManual(data: { label: string; kernel: File; initrd: File; bootArgs?: string }): Promise<JobResponse | void> {

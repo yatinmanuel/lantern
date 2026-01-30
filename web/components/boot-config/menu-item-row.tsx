@@ -41,7 +41,7 @@ export function MenuItemRow({ id, item, onDelete, onChange }: MenuItemRowProps) 
       ref={setNodeRef}
       style={style}
       className={cn(
-         "mx-1 flex items-center gap-2 p-2 bg-card border rounded-md mb-2 group",
+         "w-full flex items-center gap-2 p-2 bg-card border rounded-md group",
          isDragging && "shadow-lg ring-2 ring-primary bg-accent"
       )}
     >

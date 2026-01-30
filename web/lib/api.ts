@@ -7,6 +7,7 @@ const API_BASE_URL = typeof window !== 'undefined'
 
 export interface Server {
   id: number;
+  uuid: string;
   mac_address: string;
   ip_address: string | null;
   hostname: string | null;
@@ -16,7 +17,8 @@ export interface Server {
     memory_gb?: number;
     disk_gb?: number;
   } | null;
-  last_seen: string;
+  boot_menu_id?: string | null;
+  last_seen: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -64,8 +66,10 @@ export const api = {
 
   async registerServer(data: {
     mac_address: string;
+    hostname?: string;
     ip_address?: string;
     hardware_info?: Record<string, any>;
+    manual?: boolean;
   }): Promise<Server> {
     const res = await fetch(`${API_BASE_URL}/api/servers/register`, {
       method: 'POST',

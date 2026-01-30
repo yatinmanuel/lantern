@@ -24,8 +24,8 @@ export const imageApi = {
     return res.json();
   },
 
-  async remove(name: string): Promise<void> {
-    const res = await fetch(`${API_BASE_URL}/api/images/${encodeURIComponent(name)}`, {
+  async remove(id: string): Promise<void> {
+    const res = await fetch(`${API_BASE_URL}/api/images/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       credentials: 'include',
       headers: getSessionHeaders(),

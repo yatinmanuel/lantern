@@ -37,13 +37,23 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
-const statusColors = {
-  ready: 'bg-green-100 text-green-800 border-green-200',
-  booting: 'bg-blue-100 text-blue-800 border-blue-200',
-  installing: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-  installed: 'bg-purple-100 text-purple-800 border-purple-200',
-  error: 'bg-red-100 text-red-800 border-red-200',
-};
+const MAC_REGEX = /^([0-9A-Fa-f]{2}([:-])){5}[0-9A-Fa-f]{2}$|^([0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4}$/;
+const ONLINE_THRESHOLD_MS = 60 * 1000;
+const STANDBY_THRESHOLD_MS = 5 * 60 * 1000;
+
+function getPresence(lastSeen?: string) {
+  if (!lastSeen) {
+    return { label: 'offline', dotClass: 'bg-muted-foreground/50', textClass: 'text-muted-foreground', pulse: false };
+  }
+  const diff = Date.now() - new Date(lastSeen).getTime();
+  if (diff <= ONLINE_THRESHOLD_MS) {
+    return { label: 'online', dotClass: 'bg-emerald-500', textClass: 'text-emerald-400', pulse: true };
+  }
+  if (diff <= STANDBY_THRESHOLD_MS) {
+    return { label: 'standby', dotClass: 'bg-amber-400', textClass: 'text-amber-300', pulse: true };
+  }
+  return { label: 'offline', dotClass: 'bg-muted-foreground/50', textClass: 'text-muted-foreground', pulse: false };
+}
 
 export default function ServersPage() {
   const router = useRouter();
@@ -57,10 +67,7 @@ export default function ServersPage() {
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [formData, setFormData] = useState({
     mac_address: '',
-    ip_address: '',
-    cpu_cores: '',
-    memory_gb: '',
-    disk_gb: '',
+    hostname: '',
   });
   const [editData, setEditData] = useState({
     ip_address: '',
@@ -95,17 +102,23 @@ export default function ServersPage() {
 
   async function handleRegister() {
     try {
+      const macAddress = formData.mac_address.trim().toLowerCase();
+      const hostname = formData.hostname.trim();
+      if (!hostname) {
+        alert('Name is required');
+        return;
+      }
+      if (!MAC_REGEX.test(macAddress)) {
+        alert('Invalid MAC address');
+        return;
+      }
       await api.registerServer({
-        mac_address: formData.mac_address,
-        ip_address: formData.ip_address || undefined,
-        hardware_info: {
-          cpu_cores: formData.cpu_cores ? parseInt(formData.cpu_cores) : undefined,
-          memory_gb: formData.memory_gb ? parseInt(formData.memory_gb) : undefined,
-          disk_gb: formData.disk_gb ? parseInt(formData.disk_gb) : undefined,
-        },
+        mac_address: macAddress,
+        hostname,
+        manual: true,
       });
       setOpen(false);
-      setFormData({ mac_address: '', ip_address: '', cpu_cores: '', memory_gb: '', disk_gb: '' });
+      setFormData({ mac_address: '', hostname: '' });
       loadServers();
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Failed to register client');
@@ -177,7 +190,7 @@ export default function ServersPage() {
     }
   }
 
-  function formatLastSeen(lastSeen: string | undefined): string {
+  function formatLastSeen(lastSeen: string | null | undefined): string {
     if (!lastSeen) return 'Never';
     const date = new Date(lastSeen);
     const now = new Date();
@@ -196,16 +209,19 @@ export default function ServersPage() {
     {
       accessorKey: "mac_address",
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title="MAC Address" />
+        <DataTableColumnHeader column={column} title="Client" />
       ),
       cell: ({ row }) => {
         const server = row.original;
         return (
           <div
-            className="font-mono font-medium cursor-pointer hover:underline"
+            className="cursor-pointer"
             onClick={() => handleViewDetails(server)}
           >
-            {server.mac_address}
+            <div className="font-medium">{server.hostname || server.mac_address}</div>
+            {server.hostname && (
+              <div className="text-xs text-muted-foreground font-mono">{server.mac_address}</div>
+            )}
           </div>
         )
       },
@@ -266,20 +282,22 @@ export default function ServersPage() {
       },
     },
     {
-      accessorKey: "status",
+      id: "presence",
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title="Status" />
       ),
       cell: ({ row }) => {
         const server = row.original;
+        const presence = getPresence(server.last_seen);
         return (
           <div
-            className="cursor-pointer"
+            className="cursor-pointer flex items-center gap-2"
             onClick={() => handleViewDetails(server)}
           >
-            <Badge className={statusColors[server.status]}>
-              {server.status}
-            </Badge>
+            <span
+              className={`h-2.5 w-2.5 rounded-full ${presence.dotClass} ${presence.pulse ? 'animate-pulse' : ''}`}
+            />
+            <span className={`text-sm font-medium ${presence.textClass}`}>{presence.label}</span>
           </div>
         )
       },
@@ -426,6 +444,10 @@ export default function ServersPage() {
     }
   }
 
+  const macValue = formData.mac_address.trim();
+  const macInvalid = macValue.length > 0 && !MAC_REGEX.test(macValue);
+  const canRegister = !!formData.hostname.trim() && !macInvalid && macValue.length > 0;
+
   return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
@@ -449,56 +471,27 @@ export default function ServersPage() {
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
-                  <Label htmlFor="mac">MAC Address *</Label>
+                  <Label htmlFor="hostname">Name *</Label>
                   <Input
-                    id="mac"
-                    placeholder="Enter MAC address"
-                    value={formData.mac_address}
-                    onChange={(e) => setFormData({ ...formData, mac_address: e.target.value })}
+                    id="hostname"
+                    placeholder="client-01"
+                    value={formData.hostname}
+                    onChange={(e) => setFormData({ ...formData, hostname: e.target.value })}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="ip">IP Address</Label>
+                  <Label htmlFor="mac">MAC Address *</Label>
                   <Input
-                    id="ip"
-                    placeholder="Enter IP address"
-                    value={formData.ip_address}
-                    onChange={(e) => setFormData({ ...formData, ip_address: e.target.value })}
+                    id="mac"
+                    placeholder="00:11:22:33:44:55"
+                    value={formData.mac_address}
+                    onChange={(e) => setFormData({ ...formData, mac_address: e.target.value })}
                   />
+                  {macInvalid && (
+                    <p className="text-xs text-destructive">Use format 00:11:22:33:44:55 or 0011.2233.4455</p>
+                  )}
                 </div>
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="cpu">CPU Cores</Label>
-                    <Input
-                      id="cpu"
-                      type="number"
-                      placeholder="CPU cores"
-                      value={formData.cpu_cores}
-                      onChange={(e) => setFormData({ ...formData, cpu_cores: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="memory">Memory (GB)</Label>
-                    <Input
-                      id="memory"
-                      type="number"
-                      placeholder="Memory (GB)"
-                      value={formData.memory_gb}
-                      onChange={(e) => setFormData({ ...formData, memory_gb: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="disk">Disk (GB)</Label>
-                    <Input
-                      id="disk"
-                      type="number"
-                      placeholder="Disk (GB)"
-                      value={formData.disk_gb}
-                      onChange={(e) => setFormData({ ...formData, disk_gb: e.target.value })}
-                    />
-                  </div>
-                </div>
-                <Button onClick={handleRegister} className="w-full">
+                <Button onClick={handleRegister} className="w-full" disabled={!canRegister}>
                   Register
                 </Button>
               </div>

@@ -4,7 +4,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 export interface BootMenuContentItem {
   type: 'iso' | 'text' | 'header' | 'separator';
   // for iso
-  isoId?: number;
+  isoId?: string;
   isoName?: string;
   label?: string; // override label or text content
   // for text/header
@@ -12,7 +12,7 @@ export interface BootMenuContentItem {
 }
 
 export interface BootMenu {
-  id: number;
+  id: string;
   name: string;
   description?: string;
   content: BootMenuContentItem[];
@@ -38,7 +38,7 @@ export const menusApi = {
     return res.json(); // returns job
   },
 
-  async update(id: number, data: { name?: string; description?: string; content?: BootMenuContentItem[]; is_default?: boolean }): Promise<any> {
+  async update(id: string, data: { name?: string; description?: string; content?: BootMenuContentItem[]; is_default?: boolean }): Promise<any> {
     const res = await fetch(`${API_BASE_URL}/api/boot-menus/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -48,7 +48,7 @@ export const menusApi = {
     return res.json(); // returns job
   },
 
-  async delete(id: number): Promise<any> {
+  async delete(id: string): Promise<any> {
     const res = await fetch(`${API_BASE_URL}/api/boot-menus/${id}`, {
       method: 'DELETE',
     });

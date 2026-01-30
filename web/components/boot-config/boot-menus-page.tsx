@@ -17,7 +17,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
 import {
   AlertDialog,
@@ -115,7 +114,7 @@ export function BootMenusPage() {
     }
   }
 
-  async function handleDeleteMenu(id: number) {
+  async function handleDeleteMenu(id: string) {
     try {
       await menusApi.delete(id);
       toast.success('Menu deleted');
@@ -142,9 +141,27 @@ export function BootMenusPage() {
         is_default: menuIsDefault,
         content: menuItems,
       });
+      const nextMenu: BootMenu = {
+        ...selectedMenu,
+        name: menuName.trim(),
+        description: menuDescription,
+        is_default: menuIsDefault,
+        content: menuItems,
+      };
+      setMenus((prev) =>
+        prev.map((menu) => {
+          if (menu.id === selectedMenu.id) {
+            return nextMenu;
+          }
+          if (menuIsDefault && menu.is_default) {
+            return { ...menu, is_default: false };
+          }
+          return menu;
+        })
+      );
+      setSelectedMenu(nextMenu);
       toast.success('Menu saved');
       setEditOpen(false);
-      await loadMenus();
     } catch (error) {
       console.error(error);
       toast.error('Failed to save menu');
@@ -199,88 +216,6 @@ export function BootMenusPage() {
                 >
                   <Plus className="h-4 w-4" />
                 </Button>
-                <Dialog open={editOpen} onOpenChange={handleEditOpenChange}>
-                  <DialogTrigger asChild>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-transparent"
-                      disabled={!selectedMenu}
-                      aria-label="Edit selected menu"
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="sm:max-w-lg">
-                    <DialogHeader>
-                      <DialogTitle>Edit Menu</DialogTitle>
-                      <DialogDescription>Update the menu name, description, and default state.</DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="menu-name">Menu Name</Label>
-                        <Input
-                          id="menu-name"
-                          value={menuName}
-                          onChange={(e) => setMenuName(e.target.value)}
-                          placeholder="Menu name"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="menu-description">Description</Label>
-                        <Input
-                          id="menu-description"
-                          value={menuDescription}
-                          onChange={(e) => setMenuDescription(e.target.value)}
-                          placeholder="Add a short description"
-                        />
-                      </div>
-                      <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Checkbox
-                          checked={menuIsDefault}
-                          onCheckedChange={(value) => setMenuIsDefault(value === true)}
-                        />
-                        Global Default
-                      </label>
-                    </div>
-                    <DialogFooter>
-                      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            className="text-destructive hover:text-destructive"
-                            disabled={!selectedMenu}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Delete menu?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              This will permanently remove "{menuName || selectedMenu?.name}" and its items.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                              onClick={() => selectedMenu && handleDeleteMenu(selectedMenu.id)}
-                              disabled={isSavingMenu}
-                            >
-                              Delete
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                      <Button onClick={handleSaveMenu} disabled={!selectedMenu || isSavingMenu}>
-                        <Save className="mr-2 h-4 w-4" />
-                        Save
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
               </div>
             </div>
 
@@ -305,10 +240,18 @@ export function BootMenusPage() {
                 {isLoading ? (
                   <div className="p-4 text-center text-sm text-muted-foreground">Loading...</div>
                 ) : filteredMenus.map(menu => (
-                  <button
+                  <div
                     key={menu.id}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedMenu(menu)}
-                    className={`w-full flex items-center justify-between p-3 rounded-md text-sm transition-colors ${
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setSelectedMenu(menu);
+                      }
+                    }}
+                    className={`w-full flex items-center justify-between p-3 rounded-md text-sm transition-colors cursor-pointer ${
                       selectedMenu?.id === menu.id
                         ? 'bg-primary/10 text-primary border border-primary/20 font-medium'
                         : 'hover:bg-accent text-foreground'
@@ -318,16 +261,115 @@ export function BootMenusPage() {
                       <Disc className="h-4 w-4 shrink-0 opacity-70" />
                       <span className="truncate">{menu.name}</span>
                     </div>
-                    {menu.is_default && <Badge variant="secondary" className="text-[10px] h-5 px-1">Default</Badge>}
-                  </button>
+                    <div className="flex items-center gap-2">
+                      {menu.is_default && (
+                        <Badge variant="secondary" className="text-[10px] h-5 px-1">Default</Badge>
+                      )}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-transparent"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedMenu(menu);
+                          setEditOpen(true);
+                        }}
+                        aria-label={`Edit ${menu.name}`}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
                 ))}
                 {!isLoading && filteredMenus.length === 0 && (
                   <div className="p-8 text-center text-sm text-muted-foreground">
                     No menus found.
                   </div>
                 )}
+                {!isLoading && (
+                  <button
+                    type="button"
+                    onClick={() => setIsCreating(true)}
+                    className="mt-2 w-full flex items-center justify-center gap-2 rounded-md border-2 border-dashed border-border px-3 py-3 text-xs text-muted-foreground transition-colors hover:text-foreground hover:border-foreground/60 bg-muted/20"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add menu
+                  </button>
+                )}
               </div>
             </ScrollArea>
+
+            <Dialog open={editOpen} onOpenChange={handleEditOpenChange}>
+              <DialogContent className="sm:max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Edit Menu</DialogTitle>
+                  <DialogDescription>Update the menu name, description, and default state.</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="menu-name">Menu Name</Label>
+                    <Input
+                      id="menu-name"
+                      value={menuName}
+                      onChange={(e) => setMenuName(e.target.value)}
+                      placeholder="Menu name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="menu-description">Description</Label>
+                    <Input
+                      id="menu-description"
+                      value={menuDescription}
+                      onChange={(e) => setMenuDescription(e.target.value)}
+                      placeholder="Add a short description"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Checkbox
+                      checked={menuIsDefault}
+                      onCheckedChange={(value) => setMenuIsDefault(value === true)}
+                    />
+                    Global Default
+                  </label>
+                </div>
+                <DialogFooter>
+                  <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive"
+                        disabled={!selectedMenu}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        Delete
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete menu?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This will permanently remove "{menuName || selectedMenu?.name}" and its items.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          onClick={() => selectedMenu && handleDeleteMenu(selectedMenu.id)}
+                          disabled={isSavingMenu}
+                        >
+                          Delete
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                  <Button onClick={handleSaveMenu} disabled={!selectedMenu || isSavingMenu}>
+                    <Save className="mr-2 h-4 w-4" />
+                    Save
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
           </div>
 
@@ -340,6 +382,8 @@ export function BootMenusPage() {
                     key={selectedMenu.id}
                     menu={selectedMenu}
                     onItemsChange={setMenuItems}
+                    onSave={handleSaveMenu}
+                    isSaving={isSavingMenu}
                   />
                 ) : (
                   <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
@@ -351,7 +395,7 @@ export function BootMenusPage() {
             </div>
 
             <div className="w-80 min-h-0 rounded-2xl border border-border/40 bg-background/60 shadow-sm overflow-hidden">
-              <ClientOverridesPanel menus={menus} />
+              <ClientOverridesPanel menus={menus} defaultMenuId={selectedMenu?.id ?? null} />
             </div>
           </div>
         </div>
