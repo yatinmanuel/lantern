@@ -238,18 +238,10 @@ function pickAlpineBootFiles(destDir: string): { kernel: string; initrd: string;
   let repoPath: string | undefined;
   const apksDir = path.join(destDir, 'apks');
   if (fileExists(apksDir)) {
-    const archDirs = readDirSafe(apksDir).filter((entry) => {
-      try {
-        return fs.statSync(path.join(apksDir, entry)).isDirectory();
-      } catch {
-        return false;
-      }
-    });
-    if (archDirs.length > 0) {
-      repoPath = `/apks/${archDirs[0]}`;
-    } else {
-      repoPath = '/apks';
-    }
+    // Alpine's init scripts automatically append the architecture to alpine_repo,
+    // so we should NOT include the arch dir (e.g. x86_64) in the path.
+    // Just use /apks and let Alpine add the arch suffix itself.
+    repoPath = '/apks';
   }
 
   return { kernel, initrd, modloop, repoPath };
@@ -272,13 +264,14 @@ export function detectIsoEntry(isoName: string, destDir: string, baseUrl: string
     const initrdCandidates = ['initrd', 'initrd.lz', 'initrd.gz', 'initrd.xz'];
     const initrdRel = initrdCandidates.find(candidate => fileExists(path.join(destDir, 'casper', candidate)));
     if (initrdRel) {
+      // For netboot, Ubuntu needs url= to find the filesystem over HTTP
       return {
         iso_name: isoName,
         label,
         os_type: 'ubuntu',
         kernel_path: `${isoBasePath}/casper/vmlinuz`,
         initrd_items: [{ path: `${isoBasePath}/casper/${initrdRel}` }],
-        boot_args: 'boot=casper ip=dhcp',
+        boot_args: `boot=casper netboot=url url=${baseUrl}${isoBasePath}/ ip=dhcp`,
       };
     }
   }
@@ -286,13 +279,14 @@ export function detectIsoEntry(isoName: string, destDir: string, baseUrl: string
   const liveKernel = path.join(destDir, 'live', 'vmlinuz');
   const liveInitrd = path.join(destDir, 'live', 'initrd.img');
   if (fileExists(liveKernel) && fileExists(liveInitrd)) {
+    // For netboot, Debian live needs fetch= to find the squashfs over HTTP
     return {
       iso_name: isoName,
       label,
       os_type: 'debian',
       kernel_path: `${isoBasePath}/live/vmlinuz`,
       initrd_items: [{ path: `${isoBasePath}/live/initrd.img` }],
-      boot_args: 'boot=live ip=dhcp',
+      boot_args: `boot=live fetch=${baseUrl}${isoBasePath}/live/filesystem.squashfs ip=dhcp`,
     };
   }
 

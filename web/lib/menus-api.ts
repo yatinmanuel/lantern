@@ -1,7 +1,7 @@
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
-export type PowerStateAction = 'reboot' | 'poweroff' | 'shell' | 'local_boot'; // poweroff hidden in UI, legacy only
+export type PowerStateAction = 'reboot' | 'shell' | 'local_boot';
 
 export interface BootMenuContentItem {
   type: 'iso' | 'text' | 'header' | 'separator' | 'smart_pxe' | 'power_state' | 'chain' | 'folder';

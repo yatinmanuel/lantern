@@ -1,5 +1,5 @@
 import { initDatabase, closeDatabase } from './database/index.js';
-import { migrateDefaultMenu } from './database/migration.js';
+import { migrateDefaultMenu, migratePoweroffToShell } from './database/migration.js';
 import { createServer } from './api/server.js';
 import { natsManager } from './utils/nats-manager.js';
 import { logger } from './utils/logger.js';
@@ -21,6 +21,11 @@ async function main() {
       await migrateDefaultMenu();
     } catch (error) {
       logger.warn('Failed to migrate default menu:', error);
+    }
+    try {
+      await migratePoweroffToShell();
+    } catch (error) {
+      logger.warn('Failed to migrate poweroff -> shell:', error);
     }
 
     await startJobNotifications();

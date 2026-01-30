@@ -24,7 +24,6 @@ interface MenuItemRowProps {
 const POWER_STATE_LABELS: Record<PowerStateAction, string> = {
   local_boot: 'Boot from disk',
   reboot: 'Reboot',
-  poweroff: 'Exit to shell', // legacy, no longer offered in UI
   shell: 'Exit to shell',
 };
 
@@ -219,7 +218,7 @@ export function MenuItemRow({ id, item, onDelete, onChange, depth = 0, isExpande
       {item.type === 'power_state' && (
          <div className="w-32 shrink-0">
             <Select 
-               value={item.action === 'poweroff' ? 'shell' : (item.action || 'shell')} 
+               value={item.action || 'shell'} 
                onValueChange={(value) => onChange({ action: value as PowerStateAction, label: POWER_STATE_LABELS[value as PowerStateAction] })}
             >
                <SelectTrigger className="h-8 text-xs">

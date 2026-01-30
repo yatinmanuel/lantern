@@ -72,12 +72,15 @@ export function IsoManager() {
   const [extractedIsoName, setExtractedIsoName] = useState('');
   const [extractedFiles, setExtractedFiles] = useState<ExtractedFile[]>([]);
   const [extractedKernelPath, setExtractedKernelPath] = useState('');
-  const [extractedInitrdPath, setExtractedInitrdPath] = useState('');
+  const [extractedInitrdPaths, setExtractedInitrdPaths] = useState<string[]>(['']);
   const [extractedLoading, setExtractedLoading] = useState(false);
   const [extractedFilter, setExtractedFilter] = useState('');
   const [extractedDir, setExtractedDir] = useState('');
   const [extractedBrowserOpen, setExtractedBrowserOpen] = useState(false);
   const [browserContext, setBrowserContext] = useState<'manual' | 'manage'>('manual');
+  const [browserTarget, setBrowserTarget] = useState<{ type: 'kernel' } | { type: 'initrd'; index: number } | null>(null);
+  const [selectedEntry, setSelectedEntry] = useState<{ path: string; fullPath: string; type: 'file' | 'dir' } | null>(null);
+  const [extractedBrowserError, setExtractedBrowserError] = useState<string | null>(null);
   const [remoteUrl, setRemoteUrl] = useState('');
   const [remoteMeta, setRemoteMeta] = useState<RemoteImageMeta | null>(null);
   const [remoteLoading, setRemoteLoading] = useState(false);
@@ -187,7 +190,7 @@ export function IsoManager() {
     setExtractedIsoName('');
     setExtractedFiles([]);
     setExtractedKernelPath('');
-    setExtractedInitrdPath('');
+    setExtractedInitrdPaths(['']);
     setExtractedFilter('');
     setExtractedDir('');
     setAutoExtract(true);
@@ -321,8 +324,9 @@ export function IsoManager() {
       setIsoMessage('Add a label for this image.');
       return;
     }
-    if (!extractedKernelPath.trim() || !extractedInitrdPath.trim()) {
-      setIsoMessage('Select both kernel and initramfs paths.');
+    const validInitrdPaths = extractedInitrdPaths.map(p => p.trim()).filter(Boolean);
+    if (!extractedKernelPath.trim() || validInitrdPaths.length === 0) {
+      setIsoMessage('Select kernel and at least one initramfs path.');
       return;
     }
     try {
@@ -331,7 +335,7 @@ export function IsoManager() {
         isoName: extractedIsoName.trim(),
         label: manualLabel.trim(),
         kernelPath: extractedKernelPath.trim(),
-        initrdPaths: [extractedInitrdPath.trim()],
+        initrdPaths: validInitrdPaths,
         bootArgs: manualArgs.trim() || undefined,
       });
       if (response?.job) {
@@ -532,13 +536,110 @@ export function IsoManager() {
     setManageOpen(true);
   }
 
-  function openExtractedBrowser(context: 'manual' | 'manage' = 'manual') {
+  function openExtractedBrowser(context: 'manual' | 'manage', target: { type: 'kernel' } | { type: 'initrd'; index: number }) {
     setBrowserContext(context);
-    if (!extractedIsoName) {
+    setBrowserTarget(target);
+    setSelectedEntry(null);
+    setExtractedDir('');
+    setExtractedFilter('');
+    if (!extractedIsoName && context === 'manual') {
       setIsoMessage('Select an extracted ISO first.');
       return;
     }
+    if (context === 'manage' && manageItem?.kind === 'image' && manageItem.data.iso_name) {
+      setExtractedIsoName(manageItem.data.iso_name);
+    }
     setExtractedBrowserOpen(true);
+  }
+
+  function handleBrowserSelect() {
+    if (!selectedEntry || selectedEntry.type !== 'file' || extractedLoading) return;
+    
+    if (browserContext === 'manage') {
+      if (browserTarget?.type === 'kernel') {
+        setManageKernelPath(selectedEntry.fullPath);
+      } else if (browserTarget?.type === 'initrd') {
+        setManageInitrdPath(selectedEntry.fullPath);
+      }
+    } else {
+      if (browserTarget?.type === 'kernel') {
+        setExtractedKernelPath(selectedEntry.fullPath);
+      } else if (browserTarget?.type === 'initrd') {
+        setExtractedInitrdPaths(prev => {
+          const updated = [...prev];
+          updated[browserTarget.index] = selectedEntry.fullPath;
+          return updated;
+        });
+      }
+    }
+    setExtractedBrowserOpen(false);
+    setSelectedEntry(null);
+    setBrowserTarget(null);
+  }
+
+  function handleBrowserRowClick(entry: { path: string; type: 'file' | 'dir'; name: string }, fullPath: string) {
+    if (entry.type === 'dir') {
+      setExtractedDir(entry.path);
+      setSelectedEntry(null);
+    } else {
+      setSelectedEntry({ path: entry.path, fullPath, type: 'file' });
+    }
+  }
+
+  function handleBrowserRowDoubleClick(entry: { path: string; type: 'file' | 'dir'; name: string }, fullPath: string) {
+    if (extractedLoading) return;
+    if (entry.type === 'dir') {
+      setExtractedDir(entry.path);
+      setSelectedEntry(null);
+    } else {
+      // Double-click on file: confirm selection
+      setSelectedEntry({ path: entry.path, fullPath, type: 'file' });
+      // Use setTimeout to let the state update before triggering select
+      setTimeout(() => {
+        if (browserContext === 'manage') {
+          if (browserTarget?.type === 'kernel') {
+            setManageKernelPath(fullPath);
+          } else if (browserTarget?.type === 'initrd') {
+            setManageInitrdPath(fullPath);
+          }
+        } else {
+          if (browserTarget?.type === 'kernel') {
+            setExtractedKernelPath(fullPath);
+          } else if (browserTarget?.type === 'initrd') {
+            setExtractedInitrdPaths(prev => {
+              const updated = [...prev];
+              if (browserTarget.index < updated.length) {
+                updated[browserTarget.index] = fullPath;
+              }
+              return updated;
+            });
+          }
+        }
+        setExtractedBrowserOpen(false);
+        setSelectedEntry(null);
+        setBrowserTarget(null);
+      }, 0);
+    }
+  }
+
+  function retryLoadExtractedFiles() {
+    if (!extractedIsoName) return;
+    setExtractedLoading(true);
+    setExtractedBrowserError(null);
+    isoApi.listExtractedFiles(extractedIsoName)
+      .then((files) => {
+        setExtractedFiles(files);
+        setExtractedBrowserError(null);
+      })
+      .catch((error) => {
+        console.error('Failed to load extracted files:', error);
+        const errorMsg = error instanceof Error ? error.message : 'Failed to load extracted files.';
+        setExtractedFiles([]);
+        setExtractedBrowserError(errorMsg);
+      })
+      .finally(() => {
+        setExtractedLoading(false);
+      });
   }
 
   const isoColumns: ColumnDef<IsoDisplay>[] = useMemo(
@@ -782,26 +883,33 @@ export function IsoManager() {
     if (!extractedIsoName) {
       setExtractedFiles([]);
       setExtractedKernelPath('');
-      setExtractedInitrdPath('');
+      setExtractedInitrdPaths(['']);
       setExtractedFilter('');
       setExtractedDir('');
+      setExtractedBrowserError(null);
       return;
     }
 
     let mounted = true;
     setExtractedLoading(true);
+    setExtractedBrowserError(null);
     isoApi.listExtractedFiles(extractedIsoName)
       .then((files) => {
         if (!mounted) return;
         setExtractedFiles(files);
         setExtractedKernelPath('');
-        setExtractedInitrdPath('');
+        setExtractedInitrdPaths(['']);
         setExtractedFilter('');
         setExtractedDir('');
+        setExtractedBrowserError(null);
       })
       .catch((error) => {
         console.error('Failed to load extracted files:', error);
-        if (mounted) setIsoMessage('Failed to load extracted files.');
+        const errorMsg = error instanceof Error ? error.message : 'Failed to load extracted files.';
+        if (mounted) {
+          setExtractedFiles([]);
+          setExtractedBrowserError(errorMsg);
+        }
       })
       .finally(() => {
         if (mounted) setExtractedLoading(false);
@@ -1102,13 +1210,54 @@ export function IsoManager() {
                              <div className="flex gap-2 items-end">
                                <div className="flex-1 space-y-2">
                                   <Label>Kernel Path</Label>
-                                  <Input value={extractedKernelPath} readOnly placeholder="Select from explorer" />
+                                  <Input value={extractedKernelPath} readOnly placeholder="Select from explorer" className="bg-background" />
                                </div>
-                               <Button variant="outline" onClick={() => openExtractedBrowser('manual')}>Browse</Button>
+                               <Button variant="outline" onClick={() => openExtractedBrowser('manual', { type: 'kernel' })} disabled={!extractedIsoName}>Browse</Button>
                              </div>
-                             <div className="flex-1 space-y-2">
-                                <Label>Initrd Path</Label>
-                                <Input value={extractedInitrdPath} readOnly placeholder="Select from explorer" />
+                             
+                             <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <Label>Initrd Paths</Label>
+                                  <Button 
+                                    type="button" 
+                                    variant="ghost" 
+                                    size="sm" 
+                                    className="h-7 text-xs"
+                                    onClick={() => setExtractedInitrdPaths(prev => [...prev, ''])}
+                                  >
+                                    <Plus className="h-3 w-3 mr-1" />
+                                    Add Initrd
+                                  </Button>
+                                </div>
+                                <div className="space-y-2">
+                                  {extractedInitrdPaths.map((path, index) => (
+                                    <div key={index} className="flex gap-2 items-center">
+                                      <Input 
+                                        value={path} 
+                                        readOnly 
+                                        placeholder="Select from explorer" 
+                                        className="flex-1 bg-background"
+                                      />
+                                      <Button 
+                                        variant="outline" 
+                                        onClick={() => openExtractedBrowser('manual', { type: 'initrd', index })}
+                                        disabled={!extractedIsoName}
+                                      >
+                                        Browse
+                                      </Button>
+                                      {extractedInitrdPaths.length > 1 && (
+                                        <Button 
+                                          variant="ghost" 
+                                          size="icon"
+                                          className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                                          onClick={() => setExtractedInitrdPaths(prev => prev.filter((_, i) => i !== index))}
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
                              </div>
                           </div>
                         </div>
@@ -1369,7 +1518,7 @@ export function IsoManager() {
                         </div>
                         <Button
                           variant="outline"
-                          onClick={() => openExtractedBrowser('manage')}
+                          onClick={() => openExtractedBrowser('manage', { type: 'kernel' })}
                           disabled={!manageCanBrowse}
                         >
                           Browse
@@ -1387,7 +1536,7 @@ export function IsoManager() {
                         </div>
                         <Button
                           variant="outline"
-                          onClick={() => openExtractedBrowser('manage')}
+                          onClick={() => openExtractedBrowser('manage', { type: 'initrd', index: 0 })}
                           disabled={!manageCanBrowse}
                         >
                           Browse
@@ -1442,58 +1591,63 @@ export function IsoManager() {
         </Dialog>
         <Dialog
           open={extractedBrowserOpen}
-          onOpenChange={(open) => setExtractedBrowserOpen(open)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSelectedEntry(null);
+              setBrowserTarget(null);
+            }
+            setExtractedBrowserOpen(open);
+          }}
         >
-          <DialogContent className="w-[95vw] max-w-6xl h-[85vh] max-h-[44rem] gap-0 p-0 overflow-hidden outline-none duration-200 sm:rounded-xl flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b bg-background/95 backdrop-blur z-10 shrink-0">
-              <div className="space-y-1">
-                <DialogTitle className="text-lg font-medium tracking-tight">File Explorer</DialogTitle>
-                <div className="flex items-center text-sm text-muted-foreground gap-2">
-                   <div className="flex items-center">
-                     <button onClick={() => setExtractedDir('')} className="hover:text-foreground transition-colors hover:underline">
-                       {extractedRoot.replace(/^\/iso\//, '') || 'root'}
-                     </button>
-                     {extractedDir.split('/').filter(Boolean).map((part, i, arr) => {
-                       const path = arr.slice(0, i + 1).join('/');
-                       return (
-                         <span key={path} className="flex items-center">
-                           <span className="mx-1.5 opacity-50">/</span>
-                           <button 
-                             onClick={() => setExtractedDir(path)}
-                             className="hover:text-foreground transition-colors hover:underline"
-                           >
-                             {part}
-                           </button>
-                         </span>
-                       );
-                     })}
-                   </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                 <div className="relative">
-                   <Input
-                     value={extractedFilter}
-                     onChange={(e) => setExtractedFilter(e.target.value)}
-                     placeholder="Search files..."
-                     className="h-8 w-[200px] bg-muted/50"
-                   />
-                 </div>
+          <DialogContent className="w-[95vw] max-w-4xl h-[80vh] max-h-[40rem] gap-0 p-0 overflow-hidden outline-none duration-200 sm:rounded-xl flex flex-col">
+            <div className="px-6 py-4 border-b bg-background/95 backdrop-blur z-10 shrink-0">
+              <DialogTitle className="text-lg font-medium tracking-tight">
+                Select {browserTarget?.type === 'kernel' ? 'Kernel' : 'Initrd'} File
+              </DialogTitle>
+              <div className="flex items-center text-sm text-muted-foreground mt-2">
+                <nav className="flex items-center">
+                  <button 
+                    onClick={() => { setExtractedDir(''); setSelectedEntry(null); }} 
+                    className="hover:text-foreground transition-colors hover:underline"
+                  >
+                    {decodeURIComponent(extractedRoot.replace(/^\/iso\//, '')) || 'root'}
+                  </button>
+                  {extractedDir.split('/').filter(Boolean).map((part, i, arr) => {
+                    const path = arr.slice(0, i + 1).join('/');
+                    return (
+                      <span key={path} className="flex items-center">
+                        <span className="mx-1.5 opacity-50">/</span>
+                        <button 
+                          onClick={() => { setExtractedDir(path); setSelectedEntry(null); }}
+                          className="hover:text-foreground transition-colors hover:underline"
+                        >
+                          {decodeURIComponent(part)}
+                        </button>
+                      </span>
+                    );
+                  })}
+                </nav>
               </div>
             </div>
 
-            <div className="flex-1 overflow-auto bg-muted/5 p-4">
-              <div className="rounded-lg border bg-background shadow-sm overflow-hidden">
+            <div className="flex-1 overflow-auto bg-muted/5">
+              <div className="rounded-lg border bg-background shadow-sm overflow-hidden m-4">
                 <div className="grid grid-cols-12 gap-4 px-4 py-2 border-b bg-muted/30 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  <div className="col-span-6">Name</div>
-                  <div className="col-span-2 text-right">Size</div>
-                  <div className="col-span-4 text-right">Actions</div>
+                  <div className="col-span-8">Name</div>
+                  <div className="col-span-4 text-right">Size</div>
                 </div>
                 
                 {extractedLoading ? (
                   <div className="flex flex-col items-center justify-center py-20 text-muted-foreground space-y-3">
                     <Loader2 className="h-6 w-6 animate-spin text-primary" />
                     <span>Loading directory...</span>
+                  </div>
+                ) : extractedBrowserError ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-muted-foreground space-y-3">
+                    <div className="text-destructive">{extractedBrowserError}</div>
+                    <Button variant="outline" size="sm" onClick={retryLoadExtractedFiles}>
+                      Retry
+                    </Button>
                   </div>
                 ) : extractedBrowserEntries.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
@@ -1504,66 +1658,31 @@ export function IsoManager() {
                   <div className="divide-y divide-border/50">
                     {extractedBrowserEntries.map((entry) => {
                       const fullPath = `${extractedRoot}/${entry.path}`;
-                       return (
+                      const isSelected = selectedEntry?.path === entry.path && entry.type === 'file';
+                      return (
                         <div 
                           key={entry.path} 
-                          className="grid grid-cols-12 gap-4 px-4 py-2.5 items-center hover:bg-muted/40 transition-colors group text-sm"
+                          className={`grid grid-cols-12 gap-4 px-4 py-2.5 items-center transition-colors cursor-pointer text-sm select-none ${
+                            isSelected 
+                              ? 'bg-primary/10 ring-1 ring-primary/30' 
+                              : 'hover:bg-muted/40'
+                          }`}
+                          onClick={() => handleBrowserRowClick(entry, fullPath)}
+                          onDoubleClick={() => handleBrowserRowDoubleClick(entry, fullPath)}
                         >
-                          <div className="col-span-6 flex items-center min-w-0">
+                          <div className="col-span-8 flex items-center min-w-0">
                             {entry.type === 'dir' ? (
                               <Folder className="h-4 w-4 text-blue-400 mr-3 shrink-0 fill-blue-400/20" />
                             ) : (
                               <FileIcon className="h-4 w-4 text-slate-400 mr-3 shrink-0" />
                             )}
-                            <button 
-                              className={`truncate text-left outline-none ${entry.type === 'dir' ? 'font-medium hover:text-primary hover:underline' : ''}`}
-                              onClick={() => entry.type === 'dir' && setExtractedDir(entry.path)}
-                            >
+                            <span className={`truncate ${entry.type === 'dir' ? 'font-medium' : ''}`}>
                               {entry.name}
-                            </button>
+                            </span>
                           </div>
                           
-                          <div className="col-span-2 text-right text-muted-foreground font-mono text-xs">
-                             {entry.type === 'dir' ? '--' : formatBytes(entry.size ?? 0)}
-                          </div>
-                          
-                          <div className="col-span-4 flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                             {entry.type === 'dir' ? (
-                               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setExtractedDir(entry.path)}>
-                                 Open
-                               </Button>
-                             ) : (
-                               <>
-                                 <Button 
-                                   size="sm" 
-                                   variant="ghost" 
-                                   className="h-7 text-xs hover:bg-primary/10 hover:text-primary"
-                                   onClick={() => {
-                                     if (browserContext === 'manage') {
-                                       setManageKernelPath(fullPath);
-                                     } else {
-                                       setExtractedKernelPath(fullPath);
-                                     }
-                                   }}
-                                 >
-                                   Set Kernel
-                                 </Button>
-                                 <Button 
-                                   size="sm" 
-                                   variant="ghost" 
-                                   className="h-7 text-xs hover:bg-primary/10 hover:text-primary"
-                                   onClick={() => {
-                                     if (browserContext === 'manage') {
-                                       setManageInitrdPath(fullPath);
-                                     } else {
-                                       setExtractedInitrdPath(fullPath);
-                                     }
-                                   }}
-                                 >
-                                   Set Initrd
-                                 </Button>
-                               </>
-                             )}
+                          <div className="col-span-4 text-right text-muted-foreground font-mono text-xs">
+                            {entry.type === 'dir' ? '--' : formatBytes(entry.size ?? 0)}
                           </div>
                         </div>
                       );
@@ -1573,13 +1692,36 @@ export function IsoManager() {
               </div>
             </div>
 
-            <div className="px-6 py-4 border-t bg-background flex justify-end">
-              <Button variant="outline" onClick={() => setExtractedBrowserOpen(false)}>
-                Done
-              </Button>
+            <div className="px-6 py-4 border-t bg-background flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <Input
+                  value={extractedFilter}
+                  onChange={(e) => setExtractedFilter(e.target.value)}
+                  placeholder="Filter files..."
+                  className="h-8 w-[200px] bg-muted/50"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setExtractedBrowserOpen(false);
+                    setSelectedEntry(null);
+                    setBrowserTarget(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleBrowserSelect}
+                  disabled={!selectedEntry || selectedEntry.type !== 'file' || extractedLoading}
+                >
+                  Select
+                </Button>
+              </div>
             </div>
           </DialogContent>
-          </Dialog>
+        </Dialog>
       </CardHeader>
       <CardContent>
         {isoMessage && (

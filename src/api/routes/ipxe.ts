@@ -163,9 +163,6 @@ boot
                 
                 if (item.action === 'reboot') {
                     targets += `\n:${key}\nreboot\n`;
-                } else if (item.action === 'poweroff') {
-                    // Legacy: power off option removed; treat as shell
-                    targets += `\n:${key}\nshell\n`;
                 } else if (item.action === 'shell') {
                     targets += `\n:${key}\nshell\n`;
                 } else if (item.action === 'local_boot') {

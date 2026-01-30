@@ -6,7 +6,6 @@ import { BootMenu } from '@/lib/menus-api';
 import { api } from '@/lib/api';
 import { withSessionHeaders } from '@/lib/session';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
@@ -408,28 +407,17 @@ export function ClientOverridesPanel({ menus, variant = 'panel', defaultMenuId }
   );
 }
 
-function ClientCard({ server, menus }: { server: Server, menus: BootMenu[] }) {
-   const currentMenu = menus.find(m => m.id === server.boot_menu_id);
-
+function ClientCard({ server }: { server: Server; menus: BootMenu[] }) {
    return (
       <div className="p-3 rounded-md border bg-card/50 hover:bg-card transition-colors">
-         <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-               <div className="font-medium text-sm flex items-center gap-2">
-                  <Monitor className="h-3 w-3 text-muted-foreground" />
-                  <span className="truncate">{server.hostname || server.mac_address}</span>
-               </div>
-               <div className="text-[10px] text-muted-foreground font-mono truncate">{server.ip_address || 'No IP'}</div>
+         <div className="font-medium text-sm flex items-center justify-between gap-2">
+            <div className="min-w-0 flex items-center gap-2">
+               <Monitor className="h-3 w-3 shrink-0 text-muted-foreground" />
+               <span className="truncate">{server.hostname || server.mac_address}</span>
             </div>
-            <Badge variant="outline" className="text-[10px] h-4 px-1 py-0 bg-primary/5 border-primary/20 text-primary">
-               Override
-            </Badge>
-         </div>
-
-         <div className="mt-2 flex items-center justify-between gap-2">
-            <div className="text-xs text-muted-foreground truncate">
-               {currentMenu ? currentMenu.name : 'Global Default'}
-            </div>
+            {server.hostname && (
+               <span className="text-muted-foreground font-mono text-xs shrink-0">{server.mac_address}</span>
+            )}
          </div>
       </div>
    );
