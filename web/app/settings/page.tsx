@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -134,7 +135,30 @@ export default function SettingsPage() {
       placeholder: 'https://dl-cdn.alpinelinux.org/alpine',
       help: 'Mirror URL used for Alpine downloads.',
     },
-  ]), []);
+    {
+      key: 'nfs_export_path',
+      label: 'NFS Export Path (optional)',
+      placeholder: '/var/www/html/iso or host path',
+      help: 'Leave empty when using the NFS container. Set to the host path when NFS runs on the host.',
+    },
+    {
+      key: 'nfs_export_subnet',
+      label: 'NFS Export Subnet',
+      placeholder: '192.168.1.0/24',
+      help: 'Subnet allowed to mount NFS. Restart NFS container after change.',
+    },
+    {
+      key: 'ubuntu_netboot_mode',
+      label: 'Ubuntu Netboot Mode',
+      placeholder: 'nfs',
+      help: 'NFS (recommended) or HTTP (Path A, fragile). Only change if you need HTTP fetch=.',
+      type: 'select',
+      options: [
+        { value: 'nfs', label: 'NFS (recommended)' },
+        { value: 'http', label: 'HTTP (fragile)' },
+      ],
+    },
+  ] as const), []);
 
   async function loadConfig() {
     try {
@@ -143,7 +167,11 @@ export default function SettingsPage() {
       setConfig(data);
       const formValues: Record<string, string> = {};
       configFields.forEach((field) => {
-        formValues[field.key] = data[field.key]?.value ?? '';
+        if (field.key === 'ubuntu_netboot_mode') {
+          formValues[field.key] = data[field.key]?.value ?? 'nfs';
+        } else {
+          formValues[field.key] = data[field.key]?.value ?? '';
+        }
       });
       setConfigForm(formValues);
       setConfigMessage(null);
@@ -821,15 +849,36 @@ export default function SettingsPage() {
                     {configFields.map((field) => (
                       <div key={field.key} className="space-y-2">
                         <Label htmlFor={`config-${field.key}`}>{field.label}</Label>
-                        <Input
-                          id={`config-${field.key}`}
-                          value={configForm[field.key] ?? ''}
-                          placeholder={field.placeholder}
-                          onChange={(e) => setConfigForm((prev) => ({
-                            ...prev,
-                            [field.key]: e.target.value,
-                          }))}
-                        />
+                        {'type' in field && field.type === 'select' && 'options' in field ? (
+                          <Select
+                            value={configForm[field.key] || 'nfs'}
+                            onValueChange={(value) => setConfigForm((prev) => ({
+                              ...prev,
+                              [field.key]: value,
+                            }))}
+                          >
+                            <SelectTrigger id={`config-${field.key}`}>
+                              <SelectValue placeholder={field.placeholder} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {field.options.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input
+                            id={`config-${field.key}`}
+                            value={configForm[field.key] ?? ''}
+                            placeholder={field.placeholder}
+                            onChange={(e) => setConfigForm((prev) => ({
+                              ...prev,
+                              [field.key]: e.target.value,
+                            }))}
+                          />
+                        )}
                         <p className="text-xs text-muted-foreground">
                           {config[field.key]?.description || field.help}
                         </p>

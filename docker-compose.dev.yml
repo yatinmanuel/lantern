@@ -159,6 +159,27 @@ services:
       - nats
       - postgres
 
+  nfs:
+    container_name: lantern-nfs-dev
+    image: erichough/nfs-server:latest
+    privileged: true
+    environment:
+      NFS_EXPORT_0: "/var/www/html *(ro,fsid=0,no_subtree_check,no_root_squash,insecure)"
+      NFS_LOG_LEVEL: DEBUG
+      NFS_VERSION: "3"
+    volumes:
+      - ./pxe:/var/www/html
+      - /lib/modules:/lib/modules:ro
+    ports:
+      - "2049:2049"
+      - "2049:2049/udp"
+      - "111:111"
+      - "111:111/udp"
+      - "32765:32765"
+      - "32765:32765/udp"
+      - "32767:32767"
+      - "32767:32767/udp"
+
 volumes:
   nats-data:
   backend-node-modules:

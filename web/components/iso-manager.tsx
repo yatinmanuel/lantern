@@ -96,6 +96,7 @@ export function IsoManager() {
   const [manageSaving, setManageSaving] = useState(false);
   const [manageIsoName, setManageIsoName] = useState('');
   const [manageIsoSaving, setManageIsoSaving] = useState(false);
+  const [regeneratingBootArgs, setRegeneratingBootArgs] = useState(false);
 
   useEffect(() => {
     loadIsos();
@@ -487,6 +488,24 @@ export function IsoManager() {
       setIsoMessage(error instanceof Error ? error.message : 'Failed to update image entry.');
     } finally {
       setManageSaving(false);
+    }
+  }
+
+  async function handleRegenerateBootArgs() {
+    if (!manageItem || manageItem.kind !== 'image') return;
+    try {
+      setRegeneratingBootArgs(true);
+      const result = await imageApi.regenerateBootArgs(manageItem.data.id);
+      if (result.boot_args) {
+        setManageBootArgs(result.boot_args);
+        setIsoMessage('Boot arguments regenerated from current configuration.');
+      }
+      await loadImages({ showLoading: false, silent: true });
+    } catch (error) {
+      console.error('Failed to regenerate boot args:', error);
+      setIsoMessage(error instanceof Error ? error.message : 'Failed to regenerate boot arguments.');
+    } finally {
+      setRegeneratingBootArgs(false);
     }
   }
 
@@ -1382,11 +1401,12 @@ export function IsoManager() {
               setManageItem(null);
               setManageIsoName('');
               setManageIsoSaving(false);
+              setRegeneratingBootArgs(false);
             }
           }}
         >
-        <DialogContent className="w-[95vw] max-w-5xl h-[80vh] max-h-[40rem] gap-0 p-0 overflow-hidden sm:rounded-xl flex flex-col">
-            <div className="px-6 py-5 border-b bg-background/95 backdrop-blur">
+        <DialogContent className="w-[95vw] max-w-5xl min-h-[32rem] h-[90vh] max-h-[56rem] gap-0 p-0 overflow-hidden sm:rounded-xl flex flex-col">
+            <div className="px-6 py-5 border-b bg-background/95 backdrop-blur shrink-0">
               <DialogHeader>
                 <DialogTitle className="text-lg font-medium tracking-tight">
                   {manageItem?.kind === 'image' ? 'Manage Image Entry' : 'Manage ISO'}
@@ -1482,8 +1502,8 @@ export function IsoManager() {
                 </div>
               </div>
             ) : manageItem?.kind === 'image' ? (
-              <div className="flex-1 flex flex-col">
-                <div className="p-6 space-y-6 overflow-y-auto">
+              <div className="flex-1 flex flex-col min-h-0">
+                <div className="p-6 space-y-6 overflow-y-auto flex-1 min-h-0">
                   <div className="grid gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="manage-label">Image Name</Label>
@@ -1550,9 +1570,20 @@ export function IsoManager() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="manage-boot-args">
-                        Boot Arguments <span className="text-muted-foreground text-xs font-normal">(Optional)</span>
-                      </Label>
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="manage-boot-args">
+                          Boot Arguments <span className="text-muted-foreground text-xs font-normal">(Optional)</span>
+                        </Label>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleRegenerateBootArgs}
+                          disabled={regeneratingBootArgs}
+                        >
+                          {regeneratingBootArgs && <Loader2 className="mr-2 h-3 w-3 animate-spin" />}
+                          Regenerate
+                        </Button>
+                      </div>
                       <Input
                         id="manage-boot-args"
                         value={manageBootArgs}
@@ -1560,11 +1591,16 @@ export function IsoManager() {
                         placeholder="e.g. ip=dhcp console=ttyS0"
                         className="font-mono text-xs"
                       />
+                      {manageOsType?.toLowerCase() === 'ubuntu' && (
+                        <p className="text-xs text-muted-foreground">
+                          Ubuntu uses NFS netboot by default. Ensure the NFS container is running, or configure NFS export path in Settings → PXE Config.
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between border-t bg-background/95 px-6 py-4">
+                <div className="flex items-center justify-between border-t bg-background/95 px-6 py-4 shrink-0">
                   <Button
                     variant="ghost"
                     className="text-destructive hover:text-destructive hover:bg-destructive/5"

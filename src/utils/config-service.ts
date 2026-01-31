@@ -6,7 +6,7 @@ import { logger } from './logger.js';
 
 const execAsync = promisify(exec);
 
-export async function applyConfiguration(key: string, _value: string): Promise<void> {
+export async function applyConfiguration(key: string, value: string): Promise<void> {
   switch (key) {
     case 'pxe_server_ip':
     case 'pxe_server_port':
@@ -15,6 +15,17 @@ export async function applyConfiguration(key: string, _value: string): Promise<v
       logger.info(`Configuration ${key} updated. Restart dnsmasq to apply.`);
       break;
     case 'ipxe_menu_path':
+      break;
+    case 'nfs_export_subnet':
+      // Write subnet to file on PXE volume so NFS container can read it at startup
+      try {
+        const webRoot = process.env.WEB_ROOT || '/var/www/html';
+        const subnetFile = `${webRoot}/.nfs-export-subnet`;
+        await fs.writeFile(subnetFile, value.trim());
+        logger.info(`NFS export subnet written to ${subnetFile}. Restart NFS container to apply.`);
+      } catch (error) {
+        logger.error('Failed to write NFS export subnet file:', error);
+      }
       break;
     default:
       break;
@@ -42,6 +53,8 @@ interface=${dhcpInterface}
 dhcp-range=${dhcpRange}
 dhcp-option=3,${pxeServerIp}
 dhcp-option=6,${pxeServerIp}
+# Option 66 (next-server): required for Ubuntu casper HTTP netboot (Path A) so initrd DHCP gets this host
+dhcp-option=66,${pxeServerIp}
 
 enable-tftp
 tftp-root=${webRoot}

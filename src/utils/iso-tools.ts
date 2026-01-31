@@ -81,6 +81,27 @@ export async function getIsoDir(): Promise<string> {
   return configMap.iso_dir || process.env.ISO_DIR || path.join(webRoot, 'iso');
 }
 
+/** Path used in nfsroot= when app runs in Docker and NFS runs on host. Set NFS_EXPORT_PATH to host path to iso dir. */
+export async function getNfsExportPath(): Promise<string> {
+  const config = await PXEConfigModel.getAll();
+  const configMap: Record<string, string> = {};
+  config.forEach(item => {
+    configMap[item.key] = item.value;
+  });
+  return configMap.nfs_export_path || process.env.NFS_EXPORT_PATH || (await getIsoDir());
+}
+
+/** Ubuntu netboot: 'nfs' (default, reliable) or 'http' (Path A, fetch= — supported but fragile). Set via config key ubuntu_netboot_mode. */
+export async function getUbuntuNetbootMode(): Promise<'nfs' | 'http'> {
+  const config = await PXEConfigModel.getAll();
+  const configMap: Record<string, string> = {};
+  config.forEach(item => {
+    configMap[item.key] = item.value;
+  });
+  const raw = configMap.ubuntu_netboot_mode || 'nfs';
+  return raw.toLowerCase() === 'http' ? 'http' : 'nfs';
+}
+
 export async function getBaseUrl(): Promise<string> {
   const config = await PXEConfigModel.getAll();
   const configMap: Record<string, string> = {};
@@ -247,7 +268,13 @@ function pickAlpineBootFiles(destDir: string): { kernel: string; initrd: string;
   return { kernel, initrd, modloop, repoPath };
 }
 
-export function detectIsoEntry(isoName: string, destDir: string, baseUrl: string): {
+export function detectIsoEntry(
+  isoName: string,
+  destDir: string,
+  baseUrl: string,
+  nfsExportBase?: string,
+  ubuntuNetbootMode?: 'nfs' | 'http'
+): {
   iso_name: string;
   label: string;
   os_type: string;
@@ -264,17 +291,33 @@ export function detectIsoEntry(isoName: string, destDir: string, baseUrl: string
     const initrdCandidates = ['initrd', 'initrd.lz', 'initrd.gz', 'initrd.xz'];
     const initrdRel = initrdCandidates.find(candidate => fileExists(path.join(destDir, 'casper', candidate)));
     if (initrdRel) {
-      // Low-RAM netboot: use fetch=filesystem.squashfs so casper streams it instead of buffering an ISO
-      const squashfsCandidates = ['filesystem.squashfs', 'filesystem.squashfs.lz'];
-      const squashfsRel = squashfsCandidates.find(c => fileExists(path.join(destDir, 'casper', c))) || 'filesystem.squashfs';
-      const fetchUrl = `${baseUrl}${isoBasePath}/casper/${squashfsRel}`;
+      const casperHost = baseUrl.replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+      const useHttp = ubuntuNetbootMode === 'http';
+
+      if (useHttp) {
+        // Path A: HTTP + fetch= (supported but fragile). Requires DHCP Option 66 = PXE server; unquoted args.
+        const squashfsCandidates = ['filesystem.squashfs', 'filesystem.squashfs.lz'];
+        const squashfsRel = squashfsCandidates.find(c => fileExists(path.join(destDir, 'casper', c))) || 'filesystem.squashfs';
+        const fetchUrl = `${baseUrl}${isoBasePath}/casper/${squashfsRel}`;
+        return {
+          iso_name: isoName,
+          label,
+          os_type: 'ubuntu',
+          kernel_path: `${isoBasePath}/casper/vmlinuz`,
+          initrd_items: [{ path: `${isoBasePath}/casper/${initrdRel}` }],
+          boot_args: `boot=casper netboot=http ip=dhcp live-media-path=/casper fetch=${fetchUrl} ---`,
+        };
+      }
+
+      // Default: NFS netboot (reliable). nfsExportBase = host path when app runs in Docker.
+      const nfsPath = nfsExportBase ? path.join(nfsExportBase, baseName) : destDir;
       return {
         iso_name: isoName,
         label,
         os_type: 'ubuntu',
         kernel_path: `${isoBasePath}/casper/vmlinuz`,
         initrd_items: [{ path: `${isoBasePath}/casper/${initrdRel}` }],
-        boot_args: `boot=casper netboot=http ip=dhcp live-media-path=/casper fetch="${fetchUrl}"`,
+        boot_args: `boot=casper netboot=nfs ip=dhcp nfsroot=${casperHost}:${nfsPath} live-media-path=/casper ---`,
       };
     }
   }
@@ -390,7 +433,9 @@ export async function buildImageFromExtracted(
   }
 
   const baseUrl = await getBaseUrl();
-  const entry = detectIsoEntry(fileName, destDir, baseUrl);
+  const nfsExportBase = await getNfsExportPath();
+  const ubuntuNetbootMode = await getUbuntuNetbootMode();
+  const entry = detectIsoEntry(fileName, destDir, baseUrl, nfsExportBase, ubuntuNetbootMode);
   if (!entry) {
     throw new Error('Unsupported ISO layout. Files extracted; configure boot files manually.');
   }

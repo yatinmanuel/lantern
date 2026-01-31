@@ -35,4 +35,17 @@ export const imageApi = {
       throw new Error(error.error || 'Failed to delete image');
     }
   },
+
+  async regenerateBootArgs(id: string): Promise<{ success: boolean; boot_args: string; message: string }> {
+    const res = await fetch(`${API_BASE_URL}/api/images/${encodeURIComponent(id)}/regenerate-boot-args`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: getSessionHeaders(),
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ error: 'Failed to regenerate boot arguments' }));
+      throw new Error(error.error || 'Failed to regenerate boot arguments');
+    }
+    return res.json();
+  },
 };
