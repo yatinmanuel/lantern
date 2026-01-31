@@ -1,0 +1,6 @@
+This project includes or uses the following third-party works:
+
+  - erichough/nfs-server (Docker image)
+    https://github.com/ehough/docker-nfs-server
+    Used as a runtime container for NFS export (Ubuntu netboot).
+    License: GPL-3.0 (applies to that image only; this project is Apache-2.0).

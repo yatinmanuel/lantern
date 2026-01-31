@@ -323,56 +323,89 @@ export function detectIsoEntry(
   }
 
   const liveKernel = path.join(destDir, 'live', 'vmlinuz');
-  const liveInitrd = path.join(destDir, 'live', 'initrd.img');
-  if (fileExists(liveKernel) && fileExists(liveInitrd)) {
-    // For netboot, Debian live needs fetch= to find the squashfs over HTTP
-    return {
-      iso_name: isoName,
-      label,
-      os_type: 'debian',
-      kernel_path: `${isoBasePath}/live/vmlinuz`,
-      initrd_items: [{ path: `${isoBasePath}/live/initrd.img` }],
-      boot_args: `boot=live fetch=${baseUrl}${isoBasePath}/live/filesystem.squashfs ip=dhcp`,
-    };
+  if (fileExists(liveKernel)) {
+    const liveInitrdCandidates = ['initrd.img', 'initrd.gz', 'initrd', 'initrd.lz', 'initrd.xz'];
+    const liveInitrdRel = liveInitrdCandidates.find(candidate => fileExists(path.join(destDir, 'live', candidate)));
+    if (liveInitrdRel) {
+      // For netboot, Debian live needs fetch= to find the squashfs over HTTP
+      return {
+        iso_name: isoName,
+        label,
+        os_type: 'debian',
+        kernel_path: `${isoBasePath}/live/vmlinuz`,
+        initrd_items: [{ path: `${isoBasePath}/live/${liveInitrdRel}` }],
+        boot_args: `boot=live fetch=${baseUrl}${isoBasePath}/live/filesystem.squashfs ip=dhcp`,
+      };
+    }
+  }
+
+  // Debian/Ubuntu netinst (d-i installer) - install.amd or install.i386
+  const debianInstallerDirs = ['install.amd', 'install.i386', 'install.arm64'];
+  for (const installerDir of debianInstallerDirs) {
+    const diKernel = path.join(destDir, installerDir, 'vmlinuz');
+    if (fileExists(diKernel)) {
+      const diInitrdCandidates = ['initrd.gz', 'initrd.img', 'initrd', 'initrd.lz', 'initrd.xz'];
+      const diInitrdRel = diInitrdCandidates.find(candidate => fileExists(path.join(destDir, installerDir, candidate)));
+      if (diInitrdRel) {
+        // Debian Installer netboot - needs preseed or manual install
+        return {
+          iso_name: isoName,
+          label,
+          os_type: 'debian',
+          kernel_path: `${isoBasePath}/${installerDir}/vmlinuz`,
+          initrd_items: [{ path: `${isoBasePath}/${installerDir}/${diInitrdRel}` }],
+          boot_args: `priority=critical ip=dhcp`,
+        };
+      }
+    }
   }
 
   const fedoraKernel = path.join(destDir, 'images', 'pxeboot', 'vmlinuz');
-  const fedoraInitrd = path.join(destDir, 'images', 'pxeboot', 'initrd.img');
-  if (fileExists(fedoraKernel) && fileExists(fedoraInitrd)) {
-    return {
-      iso_name: isoName,
-      label,
-      os_type: 'fedora',
-      kernel_path: `${isoBasePath}/images/pxeboot/vmlinuz`,
-      initrd_items: [{ path: `${isoBasePath}/images/pxeboot/initrd.img` }],
-      boot_args: `inst.stage2=${baseUrl}${isoBasePath} inst.repo=${baseUrl}${isoBasePath} ip=dhcp`,
-    };
+  if (fileExists(fedoraKernel)) {
+    const fedoraInitrdCandidates = ['initrd.img', 'initrd.gz', 'initrd', 'initrd.lz', 'initrd.xz'];
+    const fedoraInitrdRel = fedoraInitrdCandidates.find(candidate => fileExists(path.join(destDir, 'images', 'pxeboot', candidate)));
+    if (fedoraInitrdRel) {
+      return {
+        iso_name: isoName,
+        label,
+        os_type: 'fedora',
+        kernel_path: `${isoBasePath}/images/pxeboot/vmlinuz`,
+        initrd_items: [{ path: `${isoBasePath}/images/pxeboot/${fedoraInitrdRel}` }],
+        boot_args: `inst.stage2=${baseUrl}${isoBasePath} inst.repo=${baseUrl}${isoBasePath} ip=dhcp`,
+      };
+    }
   }
 
   const archKernel = path.join(destDir, 'arch', 'boot', 'x86_64', 'vmlinuz-linux');
-  const archInitrd = path.join(destDir, 'arch', 'boot', 'x86_64', 'initramfs-linux.img');
-  if (fileExists(archKernel) && fileExists(archInitrd)) {
-    return {
-      iso_name: isoName,
-      label,
-      os_type: 'arch',
-      kernel_path: `${isoBasePath}/arch/boot/x86_64/vmlinuz-linux`,
-      initrd_items: [{ path: `${isoBasePath}/arch/boot/x86_64/initramfs-linux.img` }],
-      boot_args: `archisobasedir=arch archiso_http_srv=${baseUrl} archiso_http_dir=${isoBasePath} ip=dhcp`,
-    };
+  if (fileExists(archKernel)) {
+    const archInitrdCandidates = ['initramfs-linux.img', 'initrd.img', 'initrd.gz', 'initrd', 'initrd.lz', 'initrd.xz'];
+    const archInitrdRel = archInitrdCandidates.find(candidate => fileExists(path.join(destDir, 'arch', 'boot', 'x86_64', candidate)));
+    if (archInitrdRel) {
+      return {
+        iso_name: isoName,
+        label,
+        os_type: 'arch',
+        kernel_path: `${isoBasePath}/arch/boot/x86_64/vmlinuz-linux`,
+        initrd_items: [{ path: `${isoBasePath}/arch/boot/x86_64/${archInitrdRel}` }],
+        boot_args: `archisobasedir=arch archiso_http_srv=${baseUrl} archiso_http_dir=${isoBasePath} ip=dhcp`,
+      };
+    }
   }
 
   const suseKernel = path.join(destDir, 'boot', 'x86_64', 'loader', 'linux');
-  const suseInitrd = path.join(destDir, 'boot', 'x86_64', 'loader', 'initrd');
-  if (fileExists(suseKernel) && fileExists(suseInitrd)) {
-    return {
-      iso_name: isoName,
-      label,
-      os_type: 'opensuse',
-      kernel_path: `${isoBasePath}/boot/x86_64/loader/linux`,
-      initrd_items: [{ path: `${isoBasePath}/boot/x86_64/loader/initrd` }],
-      boot_args: `install=${baseUrl}${isoBasePath} ip=dhcp`,
-    };
+  if (fileExists(suseKernel)) {
+    const suseInitrdCandidates = ['initrd', 'initrd.gz', 'initrd.img', 'initrd.lz', 'initrd.xz'];
+    const suseInitrdRel = suseInitrdCandidates.find(candidate => fileExists(path.join(destDir, 'boot', 'x86_64', 'loader', candidate)));
+    if (suseInitrdRel) {
+      return {
+        iso_name: isoName,
+        label,
+        os_type: 'opensuse',
+        kernel_path: `${isoBasePath}/boot/x86_64/loader/linux`,
+        initrd_items: [{ path: `${isoBasePath}/boot/x86_64/loader/${suseInitrdRel}` }],
+        boot_args: `install=${baseUrl}${isoBasePath} ip=dhcp`,
+      };
+    }
   }
 
   const alpineBoot = pickAlpineBootFiles(destDir);
