@@ -126,6 +126,16 @@ export async function createServer(): Promise<express.Application> {
     dotfiles: 'allow',
   }));
 
+  // Serve ISO directory base URLs (trailing slash) so netboot clients get 200 instead of 404
+  app.get(/^\/iso\/(.+)\/$/, (req, res) => {
+    const subPath = req.path.slice(5, -1); // strip '/iso/' and trailing '/'
+    const dirPath = path.resolve(isoPath, subPath);
+    if (!dirPath.startsWith(path.resolve(isoPath)) || !fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+      return res.status(404).send('Not found');
+    }
+    res.status(200).type('text/plain').send('OK');
+  });
+
   // Serve ISO files
   app.use('/iso', express.static(isoPath, {
     maxAge: '1h',

@@ -264,14 +264,17 @@ export function detectIsoEntry(isoName: string, destDir: string, baseUrl: string
     const initrdCandidates = ['initrd', 'initrd.lz', 'initrd.gz', 'initrd.xz'];
     const initrdRel = initrdCandidates.find(candidate => fileExists(path.join(destDir, 'casper', candidate)));
     if (initrdRel) {
-      // For netboot, Ubuntu needs url= to find the filesystem over HTTP
+      // Low-RAM netboot: use fetch=filesystem.squashfs so casper streams it instead of buffering an ISO
+      const squashfsCandidates = ['filesystem.squashfs', 'filesystem.squashfs.lz'];
+      const squashfsRel = squashfsCandidates.find(c => fileExists(path.join(destDir, 'casper', c))) || 'filesystem.squashfs';
+      const fetchUrl = `${baseUrl}${isoBasePath}/casper/${squashfsRel}`;
       return {
         iso_name: isoName,
         label,
         os_type: 'ubuntu',
         kernel_path: `${isoBasePath}/casper/vmlinuz`,
         initrd_items: [{ path: `${isoBasePath}/casper/${initrdRel}` }],
-        boot_args: `boot=casper netboot=url url=${baseUrl}${isoBasePath}/ ip=dhcp`,
+        boot_args: `boot=casper netboot=http ip=dhcp live-media-path=/casper fetch="${fetchUrl}"`,
       };
     }
   }
