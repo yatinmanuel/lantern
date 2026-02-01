@@ -2,7 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import { Job } from '../database/job-models.js';
-import { IsoModel, IsoFileModel, ServerModel, TaskModel, PXEConfigModel, BootMenuModel } from '../database/models.js';
+import { IsoModel, IsoFileModel, ServerModel, TaskModel, PXEConfigModel, BootMenuModel, NetbootMirrorModel } from '../database/models.js';
 import { UserModel, RoleModel, PermissionModel } from '../database/user-models.js';
 import { logger } from '../utils/logger.js';
 import { generateIpxeMenu } from '../utils/ipxe.js';
@@ -16,6 +16,9 @@ import {
   buildImageFromExtracted,
   scanIsoDirectory,
 } from '../utils/iso-tools.js';
+import { acquireDownload, acquireDiscovery } from '../utils/netboot-rate-limit.js';
+import { fetchChecksumFile, verifyNetbootFiles } from '../utils/netboot-checksum.js';
+import { refreshMirrorVersions } from '../utils/netboot-discovery.js';
 import { applyConfiguration, regenerateDnsmasqConfig, restartDnsmasq } from '../utils/config-service.js';
 import { executeInstallation } from '../tasks/installer.js';
 import { natsManager } from '../utils/nats-manager.js';
@@ -369,6 +372,165 @@ async function handleImagesDelete(job: Job): Promise<Record<string, any>> {
   return { deleted: fileName };
 }
 
+async function handleImagesNetboot(job: Job): Promise<Record<string, any>> {
+  const payload = job.payload || {};
+  const distroSlug = payload.distro_slug as string;
+  const version = payload.version as string;
+  const arch = payload.arch as string || 'amd64';
+  const dirName = payload.dirName as string;
+  const label = payload.label as string;
+  const kernelUrl = payload.kernelUrl as string;
+  const initrdUrl = payload.initrdUrl as string;
+  const bootArgs = payload.bootArgs as string;
+  const checksumFileTemplate = payload.checksum_file_template as string | null | undefined;
+  const mirrorUrl = payload.mirror_url as string;
+
+  if (!distroSlug || !version || !dirName || !kernelUrl || !initrdUrl) {
+    throw new Error('Missing netboot parameters');
+  }
+
+  const releaseDownload = mirrorUrl ? await acquireDownload(mirrorUrl) : () => {};
+  try {
+    const isoDir = await getIsoDir();
+    const destDir = path.join(isoDir, dirName);
+    ensureDirSync(destDir);
+
+    const kernelPath = path.join(destDir, 'linux');
+    const initrdPath = path.join(destDir, 'initrd.gz');
+    const kernelFilename = 'linux';
+    const initrdFilename = 'initrd.gz';
+
+    const doDownload = async (): Promise<void> => {
+      await appendJobLog(job.id, `Downloading kernel from ${kernelUrl}`);
+      await downloadIsoFromUrl(kernelUrl, kernelPath, ({ downloaded, total }) => {
+        const percent = total ? Math.round((downloaded / total) * 100) : null;
+        const message = percent !== null ? `Kernel download: ${percent}%` : `Kernel download: ${downloaded} bytes`;
+        void appendJobLog(job.id, message).catch(() => {});
+      });
+      await appendJobLog(job.id, `Downloading initrd from ${initrdUrl}`);
+      await downloadIsoFromUrl(initrdUrl, initrdPath, ({ downloaded, total }) => {
+        const percent = total ? Math.round((downloaded / total) * 100) : null;
+        const message = percent !== null ? `Initrd download: ${percent}%` : `Initrd download: ${downloaded} bytes`;
+        void appendJobLog(job.id, message).catch(() => {});
+      });
+    };
+
+    await doDownload();
+
+    if (checksumFileTemplate && checksumFileTemplate.trim()) {
+      const mirrorBase = (mirrorUrl || '').replace(/\/+$/, '');
+      const mirrorPath = new URL(mirrorBase).pathname.replace(/\/+$/, '') || '/';
+      const kernelPathname = new URL(kernelUrl).pathname;
+      const relPath = kernelPathname.startsWith(mirrorPath)
+        ? kernelPathname.slice(mirrorPath.length).replace(/^\//, '')
+        : kernelPathname.replace(/^\//, '');
+      const basePath = path.dirname(relPath);
+      let checksums: Map<string, string> | null = null;
+      try {
+        checksums = await fetchChecksumFile(mirrorBase, checksumFileTemplate, basePath);
+      } catch (fetchErr) {
+        const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        await appendJobLog(job.id, `Checksum file not available (${msg}), skipping verification`, 'warn');
+      }
+      if (checksums && checksums.size > 0) {
+        try {
+          const { kernelOk, initrdOk } = await verifyNetbootFiles(
+            kernelPath,
+            initrdPath,
+            checksums,
+            kernelFilename,
+            initrdFilename
+          );
+          if (!kernelOk || !initrdOk) {
+            await appendJobLog(job.id, 'Checksum mismatch, retrying download once', 'warn');
+            await fsp.rm(kernelPath, { force: true });
+            await fsp.rm(initrdPath, { force: true });
+            await doDownload();
+            const { kernelOk: k2, initrdOk: i2 } = await verifyNetbootFiles(
+              kernelPath,
+              initrdPath,
+              checksums,
+              kernelFilename,
+              initrdFilename
+            );
+            if (!k2 || !i2) {
+              await fsp.rm(kernelPath, { force: true });
+              await fsp.rm(initrdPath, { force: true });
+              await fsp.rm(destDir, { recursive: true, force: true });
+              throw new Error('Checksum verification failed after retry');
+            }
+          }
+        } catch (verifyErr) {
+          await fsp.rm(kernelPath, { force: true }).catch(() => {});
+          await fsp.rm(initrdPath, { force: true }).catch(() => {});
+          await fsp.rm(destDir, { recursive: true, force: true }).catch(() => {});
+          throw verifyErr;
+        }
+      }
+    }
+
+    await appendJobLog(job.id, 'Download complete, creating image entry');
+
+    const entry = {
+      iso_name: `netboot:${dirName}`,
+      label: label || `${distroSlug} ${version} (${arch})`,
+      os_type: distroSlug,
+      kernel_path: `/iso/${dirName}/linux`,
+      initrd_items: [{ path: `/iso/${dirName}/initrd.gz` }],
+      boot_args: bootArgs,
+    };
+
+    const stored = await IsoModel.upsert(entry);
+    await generateIpxeMenu();
+    await appendJobLog(job.id, `iPXE entry generated for ${stored.label}`);
+
+    return { entry: stored, kernelPath, initrdPath };
+  } finally {
+    releaseDownload();
+  }
+}
+
+async function handleNetbootRefresh(job: Job): Promise<Record<string, any>> {
+  const mirrors = await NetbootMirrorModel.getAll(true);
+  const results: { mirrorId: string; success: boolean; error?: string }[] = [];
+  for (const mirror of mirrors) {
+    try {
+      await acquireDiscovery(mirror.url);
+      await refreshMirrorVersions(mirror.id);
+      await NetbootMirrorModel.update(mirror.id, {
+        last_refreshed_at: new Date().toISOString(),
+        last_tested_at: new Date().toISOString(),
+        last_test_success: true,
+      });
+      results.push({ mirrorId: mirror.id, success: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.warn('Netboot refresh failed for mirror', { mirrorId: mirror.id, error: message });
+      await NetbootMirrorModel.update(mirror.id, {
+        last_tested_at: new Date().toISOString(),
+        last_test_success: false,
+      }).catch(() => {});
+      results.push({ mirrorId: mirror.id, success: false, error: message });
+    }
+  }
+  return { results };
+}
+
+async function handleNetbootRefreshMirror(job: Job): Promise<Record<string, any>> {
+  const mirrorId = (job.payload?.mirrorId ?? job.payload?.mirror_id) as string | undefined;
+  if (!mirrorId) throw new Error('Missing mirrorId');
+  const mirror = await NetbootMirrorModel.findById(mirrorId);
+  if (!mirror) throw new Error('Mirror not found');
+  await acquireDiscovery(mirror.url);
+  await refreshMirrorVersions(mirror.id);
+  await NetbootMirrorModel.update(mirror.id, {
+    last_refreshed_at: new Date().toISOString(),
+    last_tested_at: new Date().toISOString(),
+    last_test_success: true,
+  });
+  return { mirrorId, success: true };
+}
+
 async function handleConfigUpdate(job: Job): Promise<Record<string, any>> {
   const updates = job.payload?.updates as Record<string, { value: string; description?: string }> | undefined;
   const key = job.payload?.key as string | undefined;
@@ -689,6 +851,12 @@ export async function runJobHandler(job: Job): Promise<Record<string, any>> {
       return handleImagesScan();
     case 'images.delete':
       return handleImagesDelete(job);
+    case 'images.netboot':
+      return handleImagesNetboot(job);
+    case 'netboot.refresh':
+      return handleNetbootRefresh(job);
+    case 'netboot.refresh-mirror':
+      return handleNetbootRefreshMirror(job);
     case 'config.update':
       return handleConfigUpdate(job);
     case 'config.dnsmasq.regenerate':

@@ -24,7 +24,7 @@ import {
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { BootMenu, BootMenuContentItem } from '@/lib/menus-api';
-import { isoApi, IsoFile } from '@/lib/iso-api';
+import { imageApi, type ImageEntry } from '@/lib/image-api';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -130,9 +130,13 @@ function FolderDropZone({ folderId, isActive, children }: { folderId: string; is
   );
 }
 
+function fetchImages(): Promise<ImageEntry[]> {
+  return imageApi.list();
+}
+
 export function MenuEditor({ menu, onItemsChange, onSave, isSaving }: MenuEditorProps) {
   const [items, setItems] = useState<ItemWithId[]>([]);
-  const [isos, setIsos] = useState<IsoFile[]>([]);
+  const [images, setImages] = useState<ImageEntry[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -147,8 +151,15 @@ export function MenuEditor({ menu, onItemsChange, onSave, isSaving }: MenuEditor
 
   useEffect(() => {
     setItems(injectIds(menu.content || []));
-    isoApi.list().then(setIsos).catch(console.error);
   }, [menu]);
+
+  useEffect(() => {
+    fetchImages().then(setImages).catch(console.error);
+  }, []);
+
+  const refreshImages = () => {
+    fetchImages().then(setImages).catch(console.error);
+  };
 
   useEffect(() => {
     if (!onItemsChange) return;
@@ -362,7 +373,7 @@ export function MenuEditor({ menu, onItemsChange, onSave, isSaving }: MenuEditor
                   <Plus className="h-4 w-4" />
                 </Button>
               </ContextMenuTrigger>
-              <ContextMenuContent align="end" className="w-64 p-2">
+              <ContextMenuContent align="end" className="w-64 p-2" onOpenAutoFocus={refreshImages}>
                 <ContextMenuItem onSelect={() => addItem('header')} className="gap-2">
                   <Heading className="h-4 w-4 text-muted-foreground" />
                   <span>Section Header</span>
@@ -388,21 +399,21 @@ export function MenuEditor({ menu, onItemsChange, onSave, isSaving }: MenuEditor
                     </div>
                   </ContextMenuSubTrigger>
                   <ContextMenuSubContent className="max-h-64 overflow-y-auto p-1">
-                    {isos.length === 0 ? (
-                      <ContextMenuItem disabled>No Images available</ContextMenuItem>
+                    {images.length === 0 ? (
+                      <ContextMenuItem disabled>No images available</ContextMenuItem>
                     ) : (
-                      isos.map((iso) => (
+                      images.map((img) => (
                         <ContextMenuItem
-                          key={iso.id}
+                          key={img.id}
                           onSelect={() =>
                             addItem('iso', {
-                              isoId: iso.entry?.id,
-                              isoName: iso.name,
-                              label: iso.entry?.label || iso.name,
+                              isoId: img.id,
+                              isoName: img.iso_name,
+                              label: img.label,
                             })
                           }
                         >
-                          {iso.entry?.label || iso.name}
+                          {img.label || img.iso_name}
                         </ContextMenuItem>
                       ))
                     )}
@@ -416,22 +427,22 @@ export function MenuEditor({ menu, onItemsChange, onSave, isSaving }: MenuEditor
                     </div>
                   </ContextMenuSubTrigger>
                   <ContextMenuSubContent className="max-h-64 overflow-y-auto p-1">
-                    {isos.length === 0 ? (
-                      <ContextMenuItem disabled>No Images available</ContextMenuItem>
+                    {images.length === 0 ? (
+                      <ContextMenuItem disabled>No images available</ContextMenuItem>
                     ) : (
-                      isos.map((iso) => (
+                      images.map((img) => (
                         <ContextMenuItem
-                          key={iso.id}
+                          key={img.id}
                           onSelect={() =>
                             addItem('smart_pxe', {
-                              isoId: iso.entry?.id,
-                              isoName: iso.name,
-                              label: iso.entry?.label || iso.name,
+                              isoId: img.id,
+                              isoName: img.iso_name,
+                              label: img.label,
                               auto_boot: false,
                             })
                           }
                         >
-                          {iso.entry?.label || iso.name}
+                          {img.label || img.iso_name}
                         </ContextMenuItem>
                       ))
                     )}

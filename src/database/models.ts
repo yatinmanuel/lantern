@@ -659,3 +659,379 @@ export const BootMenuModel = {
     return { updated };
   },
 };
+
+export interface NetbootDistro {
+  id: string;
+  slug: string;
+  display_name: string;
+  icon: string | null;
+  kernel_path_template: string;
+  initrd_path_template: string;
+  boot_args_template: string;
+  versions_discovery_path: string | null;
+  version_regex: string | null;
+  architectures: string[];
+  requires_subscription: boolean;
+  supports_preseed: boolean;
+  supports_kickstart: boolean;
+  checksum_file_template: string | null;
+  enabled: boolean;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface NetbootMirror {
+  id: string;
+  distro_id: string;
+  name: string;
+  url: string;
+  is_primary: boolean;
+  is_official: boolean;
+  enabled: boolean;
+  last_tested_at: string | null;
+  last_test_success: boolean | null;
+  last_refreshed_at: string | null;
+  created_at: string;
+}
+
+export interface NetbootVersion {
+  id: string;
+  mirror_id: string;
+  version: string;
+  display_name: string;
+  is_eol: boolean;
+  is_available: boolean;
+  discovered_at: string;
+  last_seen_at: string;
+}
+
+function mapNetbootDistro(row: any): NetbootDistro {
+  return {
+    ...row,
+    architectures: Array.isArray(row.architectures) ? row.architectures : (row.architectures ? JSON.parse(row.architectures) : []),
+  } as NetbootDistro;
+}
+
+export const NetbootDistroModel = {
+  async create(distro: Omit<NetbootDistro, 'id' | 'created_at'>): Promise<NetbootDistro> {
+    const db = getPool();
+    const result = await db.query(
+      `INSERT INTO netboot_distros (slug, display_name, icon, kernel_path_template, initrd_path_template, boot_args_template,
+       versions_discovery_path, version_regex, architectures, requires_subscription, supports_preseed, supports_kickstart,
+       checksum_file_template, enabled, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+       RETURNING *`,
+      [
+        distro.slug,
+        distro.display_name,
+        distro.icon ?? null,
+        distro.kernel_path_template,
+        distro.initrd_path_template,
+        distro.boot_args_template,
+        distro.versions_discovery_path ?? null,
+        distro.version_regex ?? null,
+        JSON.stringify(distro.architectures ?? []),
+        distro.requires_subscription ?? false,
+        distro.supports_preseed ?? false,
+        distro.supports_kickstart ?? false,
+        distro.checksum_file_template ?? null,
+        distro.enabled ?? true,
+        distro.sort_order ?? 0,
+      ]
+    );
+    return mapNetbootDistro(result.rows[0]);
+  },
+
+  async findById(id: string): Promise<NetbootDistro | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM netboot_distros WHERE id = $1', [id]);
+    if (result.rows.length === 0) return null;
+    return mapNetbootDistro(result.rows[0]);
+  },
+
+  async findBySlug(slug: string): Promise<NetbootDistro | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM netboot_distros WHERE slug = $1', [slug]);
+    if (result.rows.length === 0) return null;
+    return mapNetbootDistro(result.rows[0]);
+  },
+
+  async getAll(enabledOnly?: boolean): Promise<NetbootDistro[]> {
+    const db = getPool();
+    const query = enabledOnly
+      ? 'SELECT * FROM netboot_distros WHERE enabled = true ORDER BY sort_order, display_name'
+      : 'SELECT * FROM netboot_distros ORDER BY sort_order, display_name';
+    const result = await db.query(query);
+    return result.rows.map(mapNetbootDistro);
+  },
+
+  async update(id: string, updates: Partial<NetbootDistro>): Promise<NetbootDistro> {
+    const db = getPool();
+    const fields: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+
+    if (updates.display_name !== undefined) {
+      fields.push(`display_name = $${idx++}`);
+      values.push(updates.display_name);
+    }
+    if (updates.icon !== undefined) {
+      fields.push(`icon = $${idx++}`);
+      values.push(updates.icon);
+    }
+    if (updates.enabled !== undefined) {
+      fields.push(`enabled = $${idx++}`);
+      values.push(updates.enabled);
+    }
+    if (updates.sort_order !== undefined) {
+      fields.push(`sort_order = $${idx++}`);
+      values.push(updates.sort_order);
+    }
+
+    if (fields.length === 0) {
+      const existing = await this.findById(id);
+      return existing!;
+    }
+
+    values.push(id);
+    const result = await db.query(
+      `UPDATE netboot_distros SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return mapNetbootDistro(result.rows[0]);
+  },
+
+  async count(): Promise<number> {
+    const db = getPool();
+    const result = await db.query<{ count: string }>('SELECT COUNT(*) AS count FROM netboot_distros');
+    return Number(result.rows[0]?.count ?? 0);
+  },
+
+  async delete(id: string): Promise<boolean> {
+    const db = getPool();
+    const result = await db.query('DELETE FROM netboot_distros WHERE id = $1', [id]);
+    return (result.rowCount ?? 0) > 0;
+  },
+};
+
+export const NetbootMirrorModel = {
+  async create(mirror: Omit<NetbootMirror, 'id' | 'created_at'>): Promise<NetbootMirror> {
+    const db = getPool();
+    if (mirror.is_primary) {
+      await db.query(
+        'UPDATE netboot_mirrors SET is_primary = false WHERE distro_id = $1',
+        [mirror.distro_id]
+      );
+    }
+    const result = await db.query(
+      `INSERT INTO netboot_mirrors (distro_id, name, url, is_primary, is_official, enabled)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [
+        mirror.distro_id,
+        mirror.name,
+        mirror.url,
+        mirror.is_primary ?? false,
+        mirror.is_official ?? false,
+        mirror.enabled ?? true,
+      ]
+    );
+    return result.rows[0] as NetbootMirror;
+  },
+
+  async findById(id: string): Promise<NetbootMirror | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM netboot_mirrors WHERE id = $1', [id]);
+    return (result.rows[0] as NetbootMirror) || null;
+  },
+
+  async getByDistroId(distroId: string, enabledOnly?: boolean): Promise<NetbootMirror[]> {
+    const db = getPool();
+    const query = enabledOnly
+      ? 'SELECT * FROM netboot_mirrors WHERE distro_id = $1 AND enabled = true ORDER BY is_primary DESC, name'
+      : 'SELECT * FROM netboot_mirrors WHERE distro_id = $1 ORDER BY is_primary DESC, name';
+    const result = await db.query(query, [distroId]);
+    return result.rows as NetbootMirror[];
+  },
+
+  async getAll(enabledOnly?: boolean): Promise<NetbootMirror[]> {
+    const db = getPool();
+    const query = enabledOnly
+      ? 'SELECT * FROM netboot_mirrors WHERE enabled = true ORDER BY distro_id, is_primary DESC, name'
+      : 'SELECT * FROM netboot_mirrors ORDER BY distro_id, is_primary DESC, name';
+    const result = await db.query(query);
+    return result.rows as NetbootMirror[];
+  },
+
+  async getPrimaryForDistro(distroId: string): Promise<NetbootMirror | null> {
+    const db = getPool();
+    const result = await db.query(
+      'SELECT * FROM netboot_mirrors WHERE distro_id = $1 AND is_primary = true AND enabled = true LIMIT 1',
+      [distroId]
+    );
+    return (result.rows[0] as NetbootMirror) || null;
+  },
+
+  async update(id: string, updates: Partial<NetbootMirror>): Promise<NetbootMirror> {
+    const db = getPool();
+    const existing = await this.findById(id);
+    if (!existing) throw new Error('Mirror not found');
+
+    if (updates.is_primary === true) {
+      await db.query(
+        'UPDATE netboot_mirrors SET is_primary = false WHERE distro_id = $1',
+        [existing.distro_id]
+      );
+    }
+
+    const fields: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+
+    if (updates.name !== undefined) {
+      fields.push(`name = $${idx++}`);
+      values.push(updates.name);
+    }
+    if (updates.url !== undefined) {
+      fields.push(`url = $${idx++}`);
+      values.push(updates.url);
+    }
+    if (updates.is_primary !== undefined) {
+      fields.push(`is_primary = $${idx++}`);
+      values.push(updates.is_primary);
+    }
+    if (updates.enabled !== undefined) {
+      fields.push(`enabled = $${idx++}`);
+      values.push(updates.enabled);
+    }
+    if (updates.last_tested_at !== undefined) {
+      fields.push(`last_tested_at = $${idx++}`);
+      values.push(updates.last_tested_at);
+    }
+    if (updates.last_test_success !== undefined) {
+      fields.push(`last_test_success = $${idx++}`);
+      values.push(updates.last_test_success);
+    }
+    if (updates.last_refreshed_at !== undefined) {
+      fields.push(`last_refreshed_at = $${idx++}`);
+      values.push(updates.last_refreshed_at);
+    }
+
+    if (fields.length === 0) {
+      return existing;
+    }
+
+    values.push(id);
+    const result = await db.query(
+      `UPDATE netboot_mirrors SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    return result.rows[0] as NetbootMirror;
+  },
+
+  async delete(id: string): Promise<boolean> {
+    const db = getPool();
+    const result = await db.query('DELETE FROM netboot_mirrors WHERE id = $1', [id]);
+    return (result.rowCount ?? 0) > 0;
+  },
+
+  async findByUrl(url: string): Promise<NetbootMirror | null> {
+    const db = getPool();
+    const normalized = url.replace(/\/+$/, '').toLowerCase();
+    const result = await db.query(
+      'SELECT * FROM netboot_mirrors WHERE LOWER(TRIM(TRAILING \'/\' FROM url)) = $1',
+      [normalized]
+    );
+    return (result.rows[0] as NetbootMirror) || null;
+  },
+};
+
+export const NetbootVersionModel = {
+  async create(version: Omit<NetbootVersion, 'id'>): Promise<NetbootVersion> {
+    const db = getPool();
+    const result = await db.query(
+      `INSERT INTO netboot_versions (mirror_id, version, display_name, is_eol, is_available, discovered_at, last_seen_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (mirror_id, version) DO UPDATE SET
+         display_name = EXCLUDED.display_name,
+         is_eol = EXCLUDED.is_eol,
+         is_available = EXCLUDED.is_available,
+         last_seen_at = EXCLUDED.last_seen_at
+       RETURNING *`,
+      [
+        version.mirror_id,
+        version.version,
+        version.display_name,
+        version.is_eol ?? false,
+        version.is_available ?? true,
+        version.discovered_at ?? new Date().toISOString(),
+        version.last_seen_at ?? new Date().toISOString(),
+      ]
+    );
+    return result.rows[0] as NetbootVersion;
+  },
+
+  async upsertMany(mirrorId: string, versions: { version: string; display_name: string }[]): Promise<void> {
+    const db = getPool();
+    const now = new Date().toISOString();
+    for (const v of versions) {
+      await db.query(
+        `INSERT INTO netboot_versions (mirror_id, version, display_name, is_eol, is_available, discovered_at, last_seen_at)
+         VALUES ($1, $2, $3, false, true, $4, $4)
+         ON CONFLICT (mirror_id, version) DO UPDATE SET
+           display_name = EXCLUDED.display_name,
+           is_available = true,
+           last_seen_at = EXCLUDED.last_seen_at`,
+        [mirrorId, v.version, v.display_name, now]
+      );
+    }
+  },
+
+  async findById(id: string): Promise<NetbootVersion | null> {
+    const db = getPool();
+    const result = await db.query('SELECT * FROM netboot_versions WHERE id = $1', [id]);
+    return (result.rows[0] as NetbootVersion) || null;
+  },
+
+  async getByMirrorId(mirrorId: string): Promise<NetbootVersion[]> {
+    const db = getPool();
+    const result = await db.query(
+      'SELECT * FROM netboot_versions WHERE mirror_id = $1 ORDER BY display_name',
+      [mirrorId]
+    );
+    return result.rows as NetbootVersion[];
+  },
+
+  async markMissingUnavailable(mirrorId: string, seenVersions: string[]): Promise<void> {
+    const db = getPool();
+    if (seenVersions.length === 0) {
+      await db.query(
+        'UPDATE netboot_versions SET is_available = false WHERE mirror_id = $1',
+        [mirrorId]
+      );
+      return;
+    }
+    await db.query(
+      'UPDATE netboot_versions SET is_available = false WHERE mirror_id = $1 AND version != ALL($2::text[])',
+      [mirrorId, seenVersions]
+    );
+    await db.query(
+      'UPDATE netboot_versions SET is_available = true, last_seen_at = NOW() WHERE mirror_id = $1 AND version = ANY($2::text[])',
+      [mirrorId, seenVersions]
+    );
+  },
+
+  async markEolOlderThan(mirrorId: string, days: number): Promise<void> {
+    const db = getPool();
+    await db.query(
+      `UPDATE netboot_versions SET is_eol = true WHERE mirror_id = $1 AND last_seen_at < NOW() - INTERVAL '1 day' * $2`,
+      [mirrorId, days]
+    );
+  },
+
+  async deleteByMirrorId(mirrorId: string): Promise<number> {
+    const db = getPool();
+    const result = await db.query('DELETE FROM netboot_versions WHERE mirror_id = $1', [mirrorId]);
+    return result.rowCount ?? 0;
+  },
+};

@@ -96,6 +96,10 @@ export async function createServer(): Promise<express.Application> {
   const imageModule = await import('./routes/images.js');
   app.use('/api/images', imageModule.imageRoutes);
 
+  // Import netboot routes (dynamic import)
+  const netbootModule = await import('./routes/netboot.js');
+  app.use('/api/netboot', netbootModule.netbootRoutes);
+
   // Import job routes (dynamic import)
   const jobsModule = await import('./routes/jobs.js');
   app.use('/api/jobs', jobsModule.jobRoutes);

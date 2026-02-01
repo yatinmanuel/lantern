@@ -200,4 +200,34 @@ export const isoApi = {
     }
     return res.json().catch(() => undefined);
   },
+
+  async downloadNetboot(data: {
+    mirror_id: string;
+    version: string;
+    arch?: string;
+    label?: string;
+    preseed_url?: string;
+    kickstart_url?: string;
+    extra_args?: string;
+  }): Promise<JobResponse | void> {
+    const res = await fetch(`${API_BASE_URL}/api/isos/netboot`, {
+      method: 'POST',
+      headers: withSessionHeaders({ 'Content-Type': 'application/json' }),
+      credentials: 'include',
+      body: JSON.stringify({
+        mirror_id: data.mirror_id,
+        version: data.version,
+        arch: data.arch || 'amd64',
+        label: data.label,
+        preseed_url: data.preseed_url,
+        kickstart_url: data.kickstart_url,
+        extra_args: data.extra_args,
+      }),
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ error: 'Failed to download netboot files' }));
+      throw new Error(error.error || 'Failed to download netboot files');
+    }
+    return res.json().catch(() => undefined);
+  },
 };

@@ -6,6 +6,12 @@ import { Download, Folder, File as FileIcon, HardDrive, Loader2, Plus, Trash2, U
 
 import { ColumnDef } from '@tanstack/react-table';
 import { isoApi, IsoFile, RemoteImageMeta, ExtractedFile } from '@/lib/iso-api';
+import {
+  netbootApi,
+  type NetbootDistro,
+  type NetbootMirror,
+  type NetbootVersion,
+} from '@/lib/netboot-api';
 import { imageApi, ImageEntry } from '@/lib/image-api';
 import { Job, jobsApi } from '@/lib/jobs-api';
 import { Badge } from '@/components/ui/badge';
@@ -38,7 +44,7 @@ function formatBytes(bytes: number): string {
   return `${size.toFixed(size < 10 && unit > 0 ? 1 : 0)} ${units[unit]}`;
 }
 
-type UploadMode = 'iso' | 'manual' | 'url';
+type UploadMode = 'iso' | 'manual' | 'url' | 'netboot';
 type ManualMode = 'upload' | 'extracted';
 type TabMode = 'images' | 'isos';
 type IsoDisplay = IsoFile & { pending?: boolean; jobId?: string };
@@ -97,6 +103,20 @@ export function IsoManager() {
   const [manageIsoName, setManageIsoName] = useState('');
   const [manageIsoSaving, setManageIsoSaving] = useState(false);
   const [regeneratingBootArgs, setRegeneratingBootArgs] = useState(false);
+  const [netbootDistros, setNetbootDistros] = useState<NetbootDistro[]>([]);
+  const [netbootMirrors, setNetbootMirrors] = useState<NetbootMirror[]>([]);
+  const [netbootVersions, setNetbootVersions] = useState<NetbootVersion[]>([]);
+  const [netbootDistroId, setNetbootDistroId] = useState('');
+  const [netbootMirrorId, setNetbootMirrorId] = useState('');
+  const [netbootVersionManual, setNetbootVersionManual] = useState(false);
+  const [netbootVersion, setNetbootVersion] = useState('');
+  const [netbootArch, setNetbootArch] = useState('amd64');
+  const [netbootLabel, setNetbootLabel] = useState('');
+  const [netbootPreseedUrl, setNetbootPreseedUrl] = useState('');
+  const [netbootKickstartUrl, setNetbootKickstartUrl] = useState('');
+  const [netbootExtraArgs, setNetbootExtraArgs] = useState('');
+  const [netbootSourcesLoading, setNetbootSourcesLoading] = useState(false);
+  const [netbootMirrorsLoading, setNetbootMirrorsLoading] = useState(false);
 
   useEffect(() => {
     loadIsos();
@@ -107,6 +127,80 @@ export function IsoManager() {
     }, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (uploadMode !== 'netboot') return;
+    let cancelled = false;
+    setNetbootSourcesLoading(true);
+    netbootApi
+      .getDistros()
+      .then((list) => {
+        if (!cancelled) {
+          setNetbootDistros(list.filter((d) => d.enabled));
+          if (list.filter((d) => d.enabled).length > 0 && !netbootDistroId) {
+            const first = list.find((d) => d.enabled);
+            if (first) setNetbootDistroId(first.id);
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setNetbootSourcesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [uploadMode]);
+
+  useEffect(() => {
+    if (!netbootDistroId) {
+      setNetbootMirrors([]);
+      setNetbootMirrorId('');
+      setNetbootVersions([]);
+      setNetbootVersion('');
+      setNetbootMirrorsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setNetbootMirrorsLoading(true);
+    netbootApi
+      .getMirrors(netbootDistroId)
+      .then((list) => {
+        if (!cancelled) {
+          const enabled = list.filter((m) => m.enabled);
+          setNetbootMirrors(enabled);
+          const primary = enabled.find((m) => m.is_primary) ?? enabled[0];
+          setNetbootMirrorId(primary?.id ?? '');
+          setNetbootVersion('');
+          setNetbootVersions([]);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setNetbootMirrorsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [netbootDistroId]);
+
+  useEffect(() => {
+    if (!netbootMirrorId) {
+      setNetbootVersions([]);
+      setNetbootVersion('');
+      return;
+    }
+    let cancelled = false;
+    netbootApi.getVersions(netbootMirrorId).then((list) => {
+      if (!cancelled) {
+        setNetbootVersions(list);
+        setNetbootVersion('');
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [netbootMirrorId]);
 
   async function loadIsos(options?: { showLoading?: boolean; silent?: boolean }) {
     const { showLoading = true, silent = false } = options ?? {};
@@ -202,6 +296,15 @@ export function IsoManager() {
     setRemoteLabel('');
     setRemoteFileName('');
     setRemoteFileNameEdited(false);
+    setNetbootDistroId('');
+    setNetbootMirrorId('');
+    setNetbootVersion('');
+    setNetbootVersionManual(false);
+    setNetbootArch('amd64');
+    setNetbootLabel('');
+    setNetbootPreseedUrl('');
+    setNetbootKickstartUrl('');
+    setNetbootExtraArgs('');
     setUploadInputKey((key) => key + 1);
     setManualInputKey((key) => key + 1);
     setUploadMode('iso');
@@ -409,6 +512,39 @@ export function IsoManager() {
     }
   }
 
+  async function handleNetbootDownload() {
+    if (!netbootMirrorId || !netbootVersion.trim()) {
+      setIsoMessage('Please select a mirror and enter or select a version.');
+      return;
+    }
+    const selectedDistro = netbootDistros.find((d) => d.id === netbootDistroId);
+    const distroLabel = selectedDistro?.display_name ?? 'Netboot';
+    try {
+      setIsoUploading(true);
+      const response = await isoApi.downloadNetboot({
+        mirror_id: netbootMirrorId,
+        version: netbootVersion.trim(),
+        arch: netbootArch,
+        label: netbootLabel.trim() || undefined,
+        preseed_url: netbootPreseedUrl.trim() || undefined,
+        kickstart_url: netbootKickstartUrl.trim() || undefined,
+        extra_args: netbootExtraArgs.trim() || undefined,
+      });
+      if (response?.job) {
+        addPendingFromJob(response.job);
+      }
+      setIsoMessage(`Downloading ${distroLabel} ${netbootVersion} netboot files...`);
+      setUploadOpen(false);
+      resetUploadForm();
+      await loadImages({ showLoading: false, silent: true });
+    } catch (error) {
+      console.error('Failed to download netboot files:', error);
+      setIsoMessage(error instanceof Error ? error.message : 'Failed to download netboot files.');
+    } finally {
+      setIsoUploading(false);
+    }
+  }
+
   async function handleSubmitUpload() {
     if (uploadMode === 'iso') {
       await handleUploadIso();
@@ -420,6 +556,10 @@ export function IsoManager() {
       } else {
         await handleAttachExtracted();
       }
+      return;
+    }
+    if (uploadMode === 'netboot') {
+      await handleNetbootDownload();
       return;
     }
     await handleUrlDownload();
@@ -1092,6 +1232,16 @@ export function IsoManager() {
                 >
                   Direct URL
                 </button>
+                <button
+                  onClick={() => setUploadMode('netboot')}
+                  className={`w-full text-left px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    uploadMode === 'netboot' 
+                      ? 'bg-secondary text-foreground' 
+                      : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                  }`}
+                >
+                  Netboot
+                </button>
               </div>
 
               {/* Main Content */}
@@ -1371,6 +1521,189 @@ export function IsoManager() {
                     </div>
                   </div>
                 )}
+
+                {uploadMode === 'netboot' && (
+                  <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                    <div className="rounded-lg border bg-muted/20 p-4 mb-4">
+                      <p className="text-sm text-muted-foreground">
+                        Download netboot installer files from configured mirrors. Configure distros and mirrors in Settings → Netboot Sources.
+                      </p>
+                    </div>
+
+                    {netbootSourcesLoading ? (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading netboot sources…
+                      </div>
+                    ) : netbootMirrorsLoading && netbootDistroId && netbootMirrors.length === 0 ? (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading mirrors…
+                      </div>
+                    ) : netbootDistros.length === 0 || (netbootDistroId && netbootMirrors.length === 0 && !netbootMirrorsLoading) ? (
+                      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
+                        <p className="text-sm">
+                          Configure netboot sources in Settings → Netboot Sources, then add at least one mirror and refresh.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label>Distribution</Label>
+                            <select
+                              value={netbootDistroId}
+                              onChange={(e) => setNetbootDistroId(e.target.value)}
+                              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            >
+                              {netbootDistros.map((d) => (
+                                <option key={d.id} value={d.id}>
+                                  {d.display_name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Mirror</Label>
+                            <select
+                              value={netbootMirrorId}
+                              onChange={(e) => setNetbootMirrorId(e.target.value)}
+                              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            >
+                              {netbootMirrors.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.name}
+                                  {m.is_primary ? ' (primary)' : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Version</Label>
+                          <div className="flex gap-2">
+                            <select
+                              value={netbootVersionManual ? '__manual__' : netbootVersion}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === '__manual__') {
+                                  setNetbootVersionManual(true);
+                                  setNetbootVersion('');
+                                } else {
+                                  setNetbootVersionManual(false);
+                                  setNetbootVersion(v);
+                                }
+                              }}
+                              disabled={netbootVersions.length === 0}
+                              className="flex h-9 flex-1 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            >
+                              <option value="">Select…</option>
+                              <option value="__manual__">Enter manually…</option>
+                              {netbootVersions.map((v) => (
+                                <option
+                                  key={v.id}
+                                  value={v.version}
+                                  className={v.is_eol ? 'text-muted-foreground' : ''}
+                                >
+                                  {v.display_name}
+                                  {v.is_eol ? ' (EOL)' : ''}
+                                </option>
+                              ))}
+                            </select>
+                            {(netbootVersionManual || netbootVersions.length === 0) && (
+                              <Input
+                                placeholder="e.g. trixie, noble"
+                                value={netbootVersion}
+                                onChange={(e) => setNetbootVersion(e.target.value)}
+                                className="flex-1"
+                              />
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Architecture</Label>
+                          <select
+                            value={netbootArch}
+                            onChange={(e) => setNetbootArch(e.target.value)}
+                            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          >
+                            <option value="amd64">amd64 (x86_64)</option>
+                            <option value="arm64">arm64 (aarch64)</option>
+                            <option value="i386">i386 (x86)</option>
+                          </select>
+                        </div>
+
+                        {netbootDistros.find((d) => d.id === netbootDistroId)?.supports_preseed && (
+                          <div className="space-y-2">
+                            <Label htmlFor="netboot-preseed">
+                              Preseed URL
+                              <span className="text-muted-foreground text-xs font-normal ml-2">(Optional)</span>
+                            </Label>
+                            <Input
+                              id="netboot-preseed"
+                              placeholder="http://my.server/preseed.cfg"
+                              value={netbootPreseedUrl}
+                              onChange={(e) => setNetbootPreseedUrl(e.target.value)}
+                            />
+                          </div>
+                        )}
+
+                        {netbootDistros.find((d) => d.id === netbootDistroId)?.supports_kickstart && (
+                          <div className="space-y-2">
+                            <Label htmlFor="netboot-kickstart">
+                              Kickstart URL
+                              <span className="text-muted-foreground text-xs font-normal ml-2">(Optional)</span>
+                            </Label>
+                            <Input
+                              id="netboot-kickstart"
+                              placeholder="http://my.server/kickstart.cfg"
+                              value={netbootKickstartUrl}
+                              onChange={(e) => setNetbootKickstartUrl(e.target.value)}
+                            />
+                          </div>
+                        )}
+
+                        <div className="space-y-2">
+                          <Label htmlFor="netboot-extra-args">
+                            Additional boot args
+                            <span className="text-muted-foreground text-xs font-normal ml-2">(Optional)</span>
+                          </Label>
+                          <Input
+                            id="netboot-extra-args"
+                            placeholder="e.g. console=ttyS0,115200"
+                            value={netbootExtraArgs}
+                            onChange={(e) => setNetbootExtraArgs(e.target.value)}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="netboot-label">
+                            Image Label
+                            <span className="text-muted-foreground text-xs font-normal ml-2">(Optional)</span>
+                          </Label>
+                          <Input
+                            id="netboot-label"
+                            placeholder={
+                              netbootDistros.find((d) => d.id === netbootDistroId)?.display_name
+                                ? `${netbootDistros.find((d) => d.id === netbootDistroId)!.display_name} ${netbootVersion || 'version'} Netboot`
+                                : 'Netboot image'
+                            }
+                            value={netbootLabel}
+                            onChange={(e) => setNetbootLabel(e.target.value)}
+                          />
+                        </div>
+
+                        <div className="rounded-lg border bg-blue-500/5 border-blue-500/20 p-4">
+                          <p className="text-sm text-blue-600 dark:text-blue-400">
+                            <strong>Note:</strong> Netboot installers require network access. Packages stream from the selected mirror during installation.
+                          </p>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1384,10 +1717,11 @@ export function IsoManager() {
                     onClick={handleSubmitUpload} 
                     disabled={isoUploading || 
                       (uploadMode === 'url' && !remoteUrl) || 
-                      (uploadMode === 'manual' && manualMode === 'extracted' && !extractedIsoName)}
+                      (uploadMode === 'manual' && manualMode === 'extracted' && !extractedIsoName) ||
+                      (uploadMode === 'netboot' && (!netbootMirrorId || !netbootVersion.trim()))}
                   >
                     {isoUploading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    {uploadMode === 'iso' ? 'Import Image' : 'Add Entry'}
+                    {uploadMode === 'iso' ? 'Import Image' : uploadMode === 'netboot' ? 'Download Netboot' : 'Add Entry'}
                   </Button>
                </div>
             </div>

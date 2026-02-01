@@ -28,7 +28,33 @@ async function main() {
       logger.warn('Failed to migrate poweroff -> shell:', error);
     }
 
+    try {
+      await seedNetbootIfEmpty();
+    } catch (error) {
+      logger.warn('Failed to seed netboot sources:', error);
+    }
+    try {
+      await fixArchBootArgsTemplate();
+    } catch (error) {
+      logger.warn('Failed to fix Arch boot args template:', error);
+    }
+
     await startJobNotifications();
+
+    try {
+      await enqueueJob({
+        type: 'netboot.refresh',
+        category: 'netboot',
+        message: 'Refresh netboot versions on startup',
+        source: 'system',
+        created_by: null,
+        payload: {},
+        target_type: 'netboot',
+        target_id: 'startup',
+      });
+    } catch (error) {
+      logger.warn('Failed to enqueue netboot refresh on startup:', error);
+    }
 
     // Generate iPXE menu on startup
     try {

@@ -21,6 +21,7 @@ import {
 import { userApi, User, Role, Permission } from '@/lib/auth-api';
 import { configApi, PXEConfig } from '@/lib/config-api';
 import { IsoManager } from '@/components/iso-manager';
+import { NetbootSourcesTab } from '@/components/settings/netboot-sources-tab';
 import { useAuth } from '@/contexts/auth-context';
 import { DataTable } from '@/components/ui/data-table';
 import { DataTableColumnHeader } from '@/components/ui/data-table-column-header';
@@ -703,6 +704,7 @@ export default function SettingsPage() {
           <TabsTrigger value="roles">Roles</TabsTrigger>
           <TabsTrigger value="permissions">Permissions</TabsTrigger>
           <TabsTrigger value="config">PXE Config</TabsTrigger>
+          <TabsTrigger value="netboot">Netboot Sources</TabsTrigger>
           <TabsTrigger value="isos">Images</TabsTrigger>
         </TabsList>
 
@@ -904,6 +906,10 @@ export default function SettingsPage() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="netboot" className="space-y-4">
+          <NetbootSourcesTab />
         </TabsContent>
 
         <TabsContent value="isos" className="space-y-4">

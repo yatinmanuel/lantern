@@ -4,7 +4,7 @@ import fsp from 'fs/promises';
 import path from 'path';
 import multer from 'multer';
 import { URL } from 'url';
-import { IsoModel, IsoFileModel, BootMenuModel } from '../../database/models.js';
+import { IsoModel, IsoFileModel, BootMenuModel, NetbootDistroModel, NetbootMirrorModel } from '../../database/models.js';
 import { logger } from '../../utils/logger.js';
 import { AuthRequest, requireAuth, requirePermission } from '../../utils/auth.js';
 import { getParamValue } from '../../utils/params.js';
@@ -452,6 +452,78 @@ isoRoutes.post('/scan', requireAuth, requirePermission('config.edit'), async (re
   } catch (error) {
     logger.error('ISO scan enqueue failed:', error);
     return res.status(500).json({ error: 'Failed to scan ISOs' });
+  }
+});
+
+// Download netboot installer files from configured mirror (database)
+isoRoutes.post('/netboot', requireAuth, requirePermission('config.edit'), async (req: AuthRequest, res: Response) => {
+  try {
+    const mirrorId = typeof req.body?.mirror_id === 'string' ? req.body.mirror_id.trim() : '';
+    const version = typeof req.body?.version === 'string' ? req.body.version.trim() : '';
+    const arch = typeof req.body?.arch === 'string' ? req.body.arch.trim() : 'amd64';
+    const label = typeof req.body?.label === 'string' ? req.body.label.trim() : '';
+    const preseedUrl = typeof req.body?.preseed_url === 'string' ? req.body.preseed_url.trim() : '';
+    const kickstartUrl = typeof req.body?.kickstart_url === 'string' ? req.body.kickstart_url.trim() : '';
+    const extraArgs = typeof req.body?.extra_args === 'string' ? req.body.extra_args.trim() : '';
+
+    if (!mirrorId || !version) {
+      return res.status(400).json({ error: 'mirror_id and version are required' });
+    }
+
+    const mirror = await NetbootMirrorModel.findById(mirrorId);
+    if (!mirror) return res.status(404).json({ error: 'Mirror not found' });
+    const distro = await NetbootDistroModel.findById(mirror.distro_id);
+    if (!distro) return res.status(404).json({ error: 'Distro not found' });
+
+    const mirrorBase = mirror.url.replace(/\/+$/, '');
+    const replaceTemplate = (t: string): string =>
+      t
+        .replace(/\{mirror\}/g, mirrorBase)
+        .replace(/\{version\}/g, version)
+        .replace(/\{arch\}/g, arch);
+
+    const kernelPath = replaceTemplate(distro.kernel_path_template);
+    const initrdPath = replaceTemplate(distro.initrd_path_template);
+    const kernelUrl = kernelPath.startsWith('http') ? kernelPath : `${mirrorBase}/${kernelPath.replace(/^\//, '')}`;
+    const initrdUrl = initrdPath.startsWith('http') ? initrdPath : `${mirrorBase}/${initrdPath.replace(/^\//, '')}`;
+
+    let bootArgs = replaceTemplate(distro.boot_args_template);
+    if (preseedUrl) bootArgs += ` preseed/url=${preseedUrl}`;
+    if (kickstartUrl) bootArgs += ` inst.ks=${kickstartUrl}`;
+    if (extraArgs) bootArgs += ` ${extraArgs}`;
+
+    const dirName = `netboot-${distro.slug}-${version}-${arch}`.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const displayLabel = label || `${distro.display_name} ${version} Netboot (${arch})`;
+
+    const { source: jobSource, created_by, meta } = buildJobMeta(req);
+    const job = await enqueueJob({
+      type: 'images.netboot',
+      category: 'images',
+      message: `Download ${distro.display_name} ${version} netboot files`,
+      source: jobSource,
+      created_by,
+      payload: {
+        mirror_id: mirrorId,
+        distro_slug: distro.slug,
+        version,
+        arch,
+        dirName,
+        label: displayLabel,
+        kernelUrl,
+        initrdUrl,
+        bootArgs,
+        checksum_file_template: distro.checksum_file_template ?? null,
+        mirror_url: mirror.url,
+        meta,
+      },
+      target_type: 'image',
+      target_id: dirName,
+    });
+
+    return res.status(202).json({ success: true, jobId: job.id, job });
+  } catch (error) {
+    logger.error('Netboot download enqueue failed:', error);
+    return res.status(500).json({ error: 'Failed to queue netboot download' });
   }
 });
 

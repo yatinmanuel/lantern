@@ -17,6 +17,9 @@ const MAX_ATTEMPTS_BY_TYPE: Record<string, number> = {
   'images.remote': 3,
   'images.scan': 1,
   'images.delete': 2,
+  'images.netboot': 3,
+  'netboot.refresh': 1,
+  'netboot.refresh-mirror': 2,
 };
 
 function applyJobDefaults(input: JobCreateInput): JobCreateInput {

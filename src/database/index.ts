@@ -259,6 +259,60 @@ export async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_job_logs_created_at ON job_logs(created_at);
   `);
 
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS netboot_distros (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      slug TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      icon TEXT,
+      kernel_path_template TEXT NOT NULL,
+      initrd_path_template TEXT NOT NULL,
+      boot_args_template TEXT NOT NULL,
+      versions_discovery_path TEXT,
+      version_regex TEXT,
+      architectures JSONB NOT NULL DEFAULT '[]'::jsonb,
+      requires_subscription BOOLEAN NOT NULL DEFAULT FALSE,
+      supports_preseed BOOLEAN NOT NULL DEFAULT FALSE,
+      supports_kickstart BOOLEAN NOT NULL DEFAULT FALSE,
+      checksum_file_template TEXT,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS netboot_mirrors (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      distro_id UUID NOT NULL REFERENCES netboot_distros(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      url TEXT NOT NULL,
+      is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+      is_official BOOLEAN NOT NULL DEFAULT FALSE,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      last_tested_at TIMESTAMPTZ,
+      last_test_success BOOLEAN,
+      last_refreshed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS netboot_versions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      mirror_id UUID NOT NULL REFERENCES netboot_mirrors(id) ON DELETE CASCADE,
+      version TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      is_eol BOOLEAN NOT NULL DEFAULT FALSE,
+      is_available BOOLEAN NOT NULL DEFAULT TRUE,
+      discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(mirror_id, version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_netboot_distros_slug ON netboot_distros(slug);
+    CREATE INDEX IF NOT EXISTS idx_netboot_distros_enabled ON netboot_distros(enabled);
+    CREATE INDEX IF NOT EXISTS idx_netboot_mirrors_distro ON netboot_mirrors(distro_id);
+    CREATE INDEX IF NOT EXISTS idx_netboot_mirrors_enabled ON netboot_mirrors(enabled);
+    CREATE INDEX IF NOT EXISTS idx_netboot_versions_mirror ON netboot_versions(mirror_id);
+  `);
+
   const webRootValue = process.env.WEB_ROOT || '/var/www/html';
   const defaultConfig = [
     {
@@ -305,6 +359,19 @@ export async function initDatabase(): Promise<void> {
       key: 'ipxe_menu_path',
       value: process.env.IPXE_MENU_PATH || '/var/www/html/ipxe/menu.ipxe',
       description: 'iPXE Menu Path',
+    },
+    { key: 'http_proxy', value: '', description: 'HTTP proxy URL for netboot mirror access' },
+    { key: 'https_proxy', value: '', description: 'HTTPS proxy URL for netboot mirror access' },
+    { key: 'no_proxy', value: 'localhost,127.0.0.1', description: 'Comma-separated hosts to bypass proxy' },
+    {
+      key: 'netboot_requests_per_minute_per_mirror',
+      value: '6',
+      description: 'Max discovery/refresh requests per mirror per minute',
+    },
+    {
+      key: 'netboot_max_concurrent_downloads',
+      value: '2',
+      description: 'Max concurrent netboot file downloads per mirror',
     },
   ];
 
