@@ -626,7 +626,6 @@ export function NetbootSourcesTab() {
           enableSorting: false,
           enableHiding: false,
         },
-  ] satisfies ColumnDef<NetbootMirror>[];
   ], [
     distroById,
     ensureVersions,

@@ -161,6 +161,9 @@ export function IsoManager() {
       setNetbootMirrorsLoading(false);
       return;
     }
+    const distro = netbootDistros.find((d) => d.id === netbootDistroId);
+    const archs = distro?.architectures?.length ? distro.architectures : ['amd64', 'arm64', 'i386'];
+    setNetbootArch((prev) => (archs.includes(prev) ? prev : archs[0]));
     let cancelled = false;
     setNetbootMirrorsLoading(true);
     netbootApi
@@ -182,7 +185,7 @@ export function IsoManager() {
     return () => {
       cancelled = true;
     };
-  }, [netbootDistroId]);
+  }, [netbootDistroId, netbootDistros]);
 
   useEffect(() => {
     if (!netbootMirrorId) {
@@ -1629,9 +1632,17 @@ export function IsoManager() {
                             onChange={(e) => setNetbootArch(e.target.value)}
                             className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                           >
-                            <option value="amd64">amd64 (x86_64)</option>
-                            <option value="arm64">arm64 (aarch64)</option>
-                            <option value="i386">i386 (x86)</option>
+                            {(
+                              netbootDistros.find((d) => d.id === netbootDistroId)?.architectures ?? [
+                                'amd64',
+                                'arm64',
+                                'i386',
+                              ]
+                            ).map((a) => (
+                              <option key={a} value={a}>
+                                {a === 'x86_64' ? 'x86_64 (amd64)' : a === 'aarch64' ? 'aarch64 (arm64)' : a}
+                              </option>
+                            ))}
                           </select>
                         </div>
 

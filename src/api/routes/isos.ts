@@ -11,6 +11,7 @@ import { getParamValue } from '../../utils/params.js';
 import { enqueueJob } from '../../jobs/service.js';
 import { buildJobMeta } from '../../jobs/request-context.js';
 import { fetchRemoteMetadata, getIsoDir, getBaseUrl, sanitizeName, ensureDirSync, listExtractedFiles } from '../../utils/iso-tools.js';
+import { normalizeArchForDistro } from '../../utils/netboot-discovery.js';
 
 export const isoRoutes = Router();
 
@@ -475,12 +476,13 @@ isoRoutes.post('/netboot', requireAuth, requirePermission('config.edit'), async 
     const distro = await NetbootDistroModel.findById(mirror.distro_id);
     if (!distro) return res.status(404).json({ error: 'Distro not found' });
 
+    const normalizedArch = normalizeArchForDistro(arch, distro.architectures ?? []);
     const mirrorBase = mirror.url.replace(/\/+$/, '');
     const replaceTemplate = (t: string): string =>
       t
         .replace(/\{mirror\}/g, mirrorBase)
         .replace(/\{version\}/g, version)
-        .replace(/\{arch\}/g, arch);
+        .replace(/\{arch\}/g, normalizedArch);
 
     const kernelPath = replaceTemplate(distro.kernel_path_template);
     const initrdPath = replaceTemplate(distro.initrd_path_template);
@@ -492,8 +494,8 @@ isoRoutes.post('/netboot', requireAuth, requirePermission('config.edit'), async 
     if (kickstartUrl) bootArgs += ` inst.ks=${kickstartUrl}`;
     if (extraArgs) bootArgs += ` ${extraArgs}`;
 
-    const dirName = `netboot-${distro.slug}-${version}-${arch}`.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const displayLabel = label || `${distro.display_name} ${version} Netboot (${arch})`;
+    const dirName = `netboot-${distro.slug}-${version}-${normalizedArch}`.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const displayLabel = label || `${distro.display_name} ${version} Netboot (${normalizedArch})`;
 
     const { source: jobSource, created_by, meta } = buildJobMeta(req);
     const job = await enqueueJob({
@@ -506,7 +508,7 @@ isoRoutes.post('/netboot', requireAuth, requirePermission('config.edit'), async 
         mirror_id: mirrorId,
         distro_slug: distro.slug,
         version,
-        arch,
+        arch: normalizedArch,
         dirName,
         label: displayLabel,
         kernelUrl,

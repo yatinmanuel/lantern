@@ -7,7 +7,23 @@ const EOL_DAYS = 90;
 
 /** User-Agent for mirror requests; many mirrors block or throttle requests without one. */
 const MIRROR_USER_AGENT =
+
   'PXE-Netboot-Discovery/1.0 (+https://github.com; mirror discovery for PXE installers)';
+
+/**
+ * Normalize arch to the distro's path convention (e.g. amd64 <-> x86_64, arm64 <-> aarch64).
+ * Returns the arch to use in templates so URLs work for all distros.
+ */
+export function normalizeArchForDistro(arch: string, distroArchitectures: string[]): string {
+  if (!distroArchitectures?.length) return (arch || 'amd64').trim().toLowerCase();
+  const a = (arch || '').trim().toLowerCase();
+  if (distroArchitectures.includes(a)) return a;
+  if (a === 'amd64' && distroArchitectures.includes('x86_64')) return 'x86_64';
+  if (a === 'x86_64' && distroArchitectures.includes('amd64')) return 'amd64';
+  if (a === 'arm64' && distroArchitectures.includes('aarch64')) return 'aarch64';
+  if (a === 'aarch64' && distroArchitectures.includes('arm64')) return 'arm64';
+  return distroArchitectures[0];
+}
 
 /**
  * Fetch a URL and return response text. Uses proxy from config if set (requires undici).
@@ -48,7 +64,34 @@ export async function fetchWithProxy(url: string): Promise<string> {
 }
 
 /**
- * Test mirror connectivity by fetching the base URL or versions path.
+ * HEAD a URL with same proxy/User-Agent as fetchWithProxy. Returns true if 2xx.
+ */
+async function headWithProxy(url: string): Promise<boolean> {
+  const httpProxy = await PXEConfigModel.get('http_proxy');
+  const httpsProxy = await PXEConfigModel.get('https_proxy');
+  const proxy = (httpsProxy || httpProxy)?.trim();
+  const headers: Record<string, string> = {
+    'User-Agent': MIRROR_USER_AGENT,
+  };
+  let response: Response;
+  if (proxy) {
+    const { fetch: undiciFetch, ProxyAgent } = await import('undici');
+    response = await undiciFetch(url, {
+      method: 'HEAD',
+      dispatcher: new ProxyAgent(proxy),
+      redirect: 'follow',
+      headers,
+    });
+  } else {
+    const fetchFn = (globalThis as unknown as { fetch?: (u: string, o?: RequestInit) => Promise<Response> }).fetch;
+    if (!fetchFn) return false;
+    response = await fetchFn(url, { method: 'HEAD', redirect: 'follow', headers });
+  }
+  return response.ok;
+}
+
+/**
+ * Test mirror connectivity: base path first, then (when possible) HEAD the actual kernel URL.
  */
 export async function testMirrorConnection(mirror: NetbootMirror, distro: NetbootDistro): Promise<boolean> {
   const baseUrl = mirror.url.replace(/\/+$/, '');
@@ -57,9 +100,40 @@ export async function testMirrorConnection(mirror: NetbootMirror, distro: Netboo
     : baseUrl;
   try {
     await fetchWithProxy(testPath);
-    return true;
   } catch (err) {
     logger.warn('Mirror test failed', { url: testPath, error: err });
+    return false;
+  }
+
+  const archs = distro.architectures?.length ? distro.architectures : [];
+  const hasTemplates =
+    distro.kernel_path_template &&
+    distro.kernel_path_template.includes('{version}') &&
+    distro.kernel_path_template.includes('{arch}');
+  if (!distro.versions_discovery_path || !hasTemplates || archs.length === 0) {
+    return true;
+  }
+
+  try {
+    const versions = await discoverVersions(mirror, distro);
+    const firstVersion = versions[0]?.version;
+    if (!firstVersion) return true;
+    const arch = normalizeArchForDistro(archs[0], archs);
+    const replace = (t: string) =>
+      t
+        .replace(/\{mirror\}/g, baseUrl)
+        .replace(/\{version\}/g, firstVersion)
+        .replace(/\{arch\}/g, arch);
+    const kernelPath = replace(distro.kernel_path_template);
+    const kernelUrl = kernelPath.startsWith('http') ? kernelPath : `${baseUrl}/${kernelPath.replace(/^\//, '')}`;
+    const ok = await headWithProxy(kernelUrl);
+    if (!ok) {
+      logger.warn('Mirror test: kernel URL not reachable', { url: kernelUrl });
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.warn('Mirror test deep check failed', { url: baseUrl, error: err });
     return false;
   }
 }
